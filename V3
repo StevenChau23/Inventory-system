@@ -1178,41 +1178,7 @@ if (searchText !== "") {
             tbody.appendChild(tr);
         });
     };
-window.renderMasterList = function() {
-        const tbody = document.getElementById('masterTbody');
-        tbody.innerHTML = "";
-        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
 
-        let allItemsMap = new Map();
-        
-        masterItemsData.forEach(m => {
-            let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
-            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: 'Master', isMaster: true });
-        });
-
-        transactionsData.forEach(t => {
-            let { mCat, mDesc, mCode } = extractItemDetails(t);
-            let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
-            if(!allItemsMap.has(key)) {
-                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
-            }
-        });
-
-        let displayData = Array.from(allItemsMap.values());
-
-        if(searchText) {
-            displayData = displayData.filter(d =>
-                d.cat.toLowerCase().includes(searchText) ||
-                d.desc.toLowerCase().includes(searchText) ||
-                d.code.toLowerCase().includes(searchText)
-            );
-        }
-
-        if(displayData.length === 0) {
-            tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;'>無相符資料</td></tr>"; return;
-        }
-
-        displayData.forEach(d => {
             let tr = document.createElement('tr');
             let rowId = d.id || d.key.replace(/[^a-zA-Z0-9]/g, '');
             tr.id = `master-row-${rowId}`;
