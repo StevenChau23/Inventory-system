@@ -463,6 +463,32 @@
         }
         document.body.style.cursor = 'default';
     }
+window.fixSystemBalances = async function() {
+        if(!confirm("⚠️ 確定要執行「修正結餘運算」嗎？\n這將會清除系統中異常的自動調整數 (sysAdjust)，強制以真實的 In / Out 數量重新計算結餘！")) return;
+        document.body.style.cursor = 'wait';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e67e22; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+        loadingDiv.innerText = "🛠 正在修復結餘運算，清除異常調整數中..."; 
+        document.body.appendChild(loadingDiv);
+
+        try {
+            let count = 0;
+            for (let t of transactionsData) {
+                if (t.sysAdjust && t.sysAdjust !== 0) {
+                    await updateDoc(doc(db, "transactions", t.id), { sysAdjust: 0 });
+                    count++;
+                }
+            }
+            document.body.removeChild(loadingDiv);
+            alert(`✅ 結餘修復完成！共移除了 ${count} 筆隱藏的異常調整數。\n系統現在會根據正常的加減邏輯 (例如 51-15=36) 顯示結餘。`);
+            loadStockData();
+        } catch (e) {
+            console.error(e);
+            if(document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv);
+            alert("❌ 修復失敗，請檢查網絡連接。");
+        }
+        document.body.style.cursor = 'default';
+    }
 
     function autoDetectYearFromFileName(fileName) {
       if (!fileName) return null; let match = fileName.match(/(20\d{2})[-_](20\d{2})/);
@@ -1178,65 +1204,6 @@ if (searchText !== "") {
             tbody.appendChild(tr);
         });
     };
-window.renderMasterList = function() {
-        const tbody = document.getElementById('masterTbody');
-        tbody.innerHTML = "";
-        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
-
-        let allItemsMap = new Map();
-        
-        masterItemsData.forEach(m => {
-            let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
-            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: 'Master', isMaster: true });
-        });
-
-        transactionsData.forEach(t => {
-            let { mCat, mDesc, mCode } = extractItemDetails(t);
-            let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
-            if(!allItemsMap.has(key)) {
-                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
-            }
-        });
-
-        let displayData = Array.from(allItemsMap.values());
-
-        if(searchText) {
-            displayData = displayData.filter(d =>
-                d.cat.toLowerCase().includes(searchText) ||
-                d.desc.toLowerCase().includes(searchText) ||
-                d.code.toLowerCase().includes(searchText)
-            );
-        }
-
-        if(displayData.length === 0) {
-            tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;'>無相符資料</td></tr>"; return;
-        }
-
-        displayData.forEach(d => {
-            let tr = document.createElement('tr');
-            let rowId = d.id || d.key.replace(/[^a-zA-Z0-9]/g, '');
-            tr.id = `master-row-${rowId}`;
-            let catStyle = d.category === 'Drape' ? 'background:#34495e;color:white;padding:3px 8px;border-radius:4px;' : 
-                           d.category === 'Consumable' ? 'background:#bdc3c7;color:#2c3e50;padding:3px 8px;border-radius:4px;' : 
-                           'background:#f39c12;color:white;padding:3px 8px;border-radius:4px;';
-            
-            let actionHtml = '';
-            if (d.isMaster) {
-                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button>
-                              <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
-            } else {
-                actionHtml = `<button class="action-btn" style="background:#3498db;" onclick="addMissingToMaster('${d.cat.replace(/'/g, "\\'")}', '${d.desc.replace(/'/g, "\\'")}', '${d.code.replace(/'/g, "\\'")}', '${d.uom.replace(/'/g, "\\'")}')">➕ 加入總表</button>`;
-            }
-
-            tr.innerHTML = `<td><span style="${catStyle}">${d.category}</span></td>
-                            <td style="font-weight:bold;">${d.cat}</td>
-                            <td>${d.desc}</td>
-                            <td>${d.code}</td>
-                            <td>${d.uom}</td>
-                            <td>${actionHtml}</td>`;
-            tbody.appendChild(tr);
-        });
-    };
 
     window.addNewMasterItem = async function() {
         let catNo = document.getElementById('newMasterCatNo').value.trim();
@@ -1744,6 +1711,10 @@ window.renderMasterList = function() {
         </div>
         <div class="excel-tip">💡 可以在對應年度的 Excel 中複製多行資料，並點擊下方表格內直接貼上 (Ctrl+V) 進行批量匯入。</div>
         <div class="toolbar">
+<div style="margin-bottom: 15px; display: flex; gap: 10px;">
+    <button class="action-btn" style="background:#34495e; color:white; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Drape')">📦 將勾選項歸類為 Drape</button>
+    <button class="action-btn" style="background:#bdc3c7; color:#2c3e50; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Consumable')">🩹 將勾選項歸類為 Consumable</button>
+</div>
           <div>
             <label style="display:inline-block; margin-right:10px;">選擇年度：</label>
             <select id="purchaseYear" onchange="loadPurchaseList()" style="width: auto; display: inline-block;">
@@ -1815,6 +1786,9 @@ window.renderMasterList = function() {
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem;" onclick="cleanGarbageData()">🧹 清除物品名為 7, 8, 9 的異常數據</button>
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#d35400;" onclick="cleanDuplicates()">🗑️ 掃描並刪除重覆的相同數據</button>
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#c0392b;" onclick="deleteAllData()">🚨 清空系統內所有的庫存紀錄</button>
+<button class="btn-primary" style="background-color: #e67e22; margin-bottom: 15px;" onclick="fixSystemBalances()">
+    🛠️ 修正系統結餘運算問題 (重新校準 IN/OUT 結餘)
+</button>
                   </div>
               </div>
           </div>
