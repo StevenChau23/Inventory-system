@@ -1081,7 +1081,104 @@ if (searchText !== "") {
     }
 
     // --- Master List 總表 CRUD 功能 ---
+    window.toggleAllMaster = function(checkbox) {
+        document.querySelectorAll('.master-checkbox').forEach(cb => cb.checked = checkbox.checked);
+    };
+
+    window.batchUpdateCategory = async function(newCategory) {
+        let selected = Array.from(document.querySelectorAll('.master-checkbox:checked')).map(cb => ({
+            id: cb.dataset.id, key: cb.dataset.key, isMaster: cb.dataset.ismaster === 'true',
+            cat: cb.dataset.cat, desc: cb.dataset.desc, code: cb.dataset.code
+        }));
+        
+        if (selected.length === 0) { alert("請先勾選要歸類的物品！"); return; }
+        if (!confirm(`確定要將選中的 ${selected.length} 個物品歸類為 ${newCategory} 嗎？\n(這將會同步更新所有相關的歷史紀錄)`)) return;
+
+        document.body.style.cursor = 'wait';
+        try {
+            for (let item of selected) {
+                if (item.isMaster && item.id) {
+                    await updateDoc(doc(db, "master_items", item.id), { category: newCategory });
+                } else {
+                    await addDoc(collection(db, "master_items"), { 
+                        catNo: item.cat !== '-' ? item.cat : '', desc: item.desc !== '-' ? item.desc : '', 
+                        code: item.code !== '-' ? item.code : 'NA', uom: '', category: newCategory
+                    });
+                }
+
+                let matchingTxs = transactionsData.filter(t => {
+                    let { mCat, mDesc, mCode } = extractItemDetails(t);
+                    return mCat === item.cat && mDesc === item.desc && (mCode === item.code || (mCode === 'NA' && item.code === '-'));
+                });
+                
+                for (let t of matchingTxs) {
+                    if (t.category !== newCategory) await updateDoc(doc(db, "transactions", t.id), { category: newCategory });
+                }
+            }
+            alert(`✅ 成功歸類 ${selected.length} 個物品為 ${newCategory}！`);
+            await loadMasterItems(); await loadStockData(); renderMasterList();
+        } catch(e) { console.error(e); alert("歸類失敗"); }
+        document.body.style.cursor = 'default';
+    };
+
     window.renderMasterList = function() {
+        const tbody = document.getElementById('masterTbody');
+        tbody.innerHTML = "";
+        
+        const thead = tbody.parentElement.querySelector('thead tr');
+        if (thead && !thead.dataset.patched) {
+            thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
+            thead.dataset.patched = "true";
+        }
+
+        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
+        let allItemsMap = new Map();
+        
+        masterItemsData.forEach(m => {
+            let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
+            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: m.category || 'Master', isMaster: true });
+        });
+
+        transactionsData.forEach(t => {
+            let { mCat, mDesc, mCode } = extractItemDetails(t);
+            let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
+            if(!allItemsMap.has(key)) {
+                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
+            }
+        });
+
+        let displayData = Array.from(allItemsMap.values());
+        if(searchText) displayData = displayData.filter(d => d.cat.toLowerCase().includes(searchText) || d.desc.toLowerCase().includes(searchText) || d.code.toLowerCase().includes(searchText));
+        if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='7' style='text-align:center;'>無相符資料</td></tr>"; return; }
+
+        displayData.forEach(d => {
+            let tr = document.createElement('tr');
+            let rowId = d.id || d.key.replace(/[^a-zA-Z0-9]/g, '');
+            tr.id = `master-row-${rowId}`;
+            let catStyle = d.category === 'Drape' ? 'background:#34495e;color:white;padding:3px 8px;border-radius:4px;' : 
+                           d.category === 'Consumable' ? 'background:#bdc3c7;color:#2c3e50;padding:3px 8px;border-radius:4px;' : 
+                           'background:#f39c12;color:white;padding:3px 8px;border-radius:4px;';
+            
+            let actionHtml = '';
+            if (d.isMaster) {
+                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button> <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
+            } else {
+                actionHtml = `<button class="action-btn" style="background:#3498db;" onclick="addMissingToMaster('${d.cat.replace(/'/g, "\\'")}', '${d.desc.replace(/'/g, "\\'")}', '${d.code.replace(/'/g, "\\'")}', '${d.uom.replace(/'/g, "\\'")}')">➕ 加入總表</button>`;
+            }
+
+            let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
+
+            tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
+                            <td><span style="${catStyle}">${d.category}</span></td>
+                            <td style="font-weight:bold;">${d.cat}</td>
+                            <td>${d.desc}</td>
+                            <td>${d.code}</td>
+                            <td>${d.uom}</td>
+                            <td>${actionHtml}</td>`;
+            tbody.appendChild(tr);
+        });
+    };
+window.renderMasterList = function() {
         const tbody = document.getElementById('masterTbody');
         tbody.innerHTML = "";
         let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
