@@ -152,7 +152,15 @@
       if (combo1 === combo2 && combo1 !== "|") return true;
       return false;
     }
-
+window.getItemBalanceKey = function(t) {
+        let { mCat, mDesc, mCode } = extractItemDetails(t);
+        let c = normalizeCode(mCode);
+        if (c && c !== "na") return "code:" + c;
+        let cat = normalizeCode(mCat);
+        let d = normalizeCode(mDesc);
+        if (cat || d) return "catdesc:" + cat + "|" + d;
+        return "raw:" + normalizeCode(t.item || "");
+    };
     window.loadMasterItems = async function() {
         try {
             const querySnapshot = await getDocs(collection(db, "master_items"));
@@ -283,27 +291,11 @@
             .filter(t => (t.category || 'Consumable') === category)
             .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        sortedData.forEach(t => {
-            let tCode = (t.haCode || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tCat = (t.catNo || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tDesc = (t.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tItemRaw = String(t.item).toLowerCase().replace(/[-_\s()|]/g, '');
-            
-            let isMatch = false;
-            if(tItemRaw === searchRaw || (tCat+tDesc+tCode).includes(searchRaw)) {
-                isMatch = true;
-            } else {
-                let parts = itemName.split("|").map(s => s.trim().toLowerCase());
-                isMatch = parts.every(part => {
-                    if (!part) return true;
-                    return tItemRaw.includes(part.replace(/[-_\s()]/g, '')) || 
-                           (t.haCode||"").toLowerCase().includes(part) || 
-                           (t.catNo||"").toLowerCase().includes(part) || 
-                           (t.desc||"").toLowerCase().includes(part);
-                });
-            }
+let targetKey = getItemBalanceKey({ item: itemName, category: category });
 
-            if(isMatch) {
+        sortedData.forEach(t => {
+            let tKey = getItemBalanceKey(t);
+            if(tKey === targetKey) {
                 let q = parseFloat(t.qty) || 0;
                 let adj = parseFloat(t.sysAdjust) || 0;
                 if(t.type === 'Opening Balance') { bal = q; }
@@ -855,15 +847,15 @@ let runningBalData = [...baseData].sort((a, b) => {
       });
 let itemBalances = {};
       
-      runningBalData.forEach(t => {
-          let k = (t.haCode && t.haCode !== "NA") ? t.haCode : `${t.catNo}|${t.desc}`;
-          if (!itemBalances[k]) itemBalances[k] = 0;
-          let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
-          if (t.type === "Opening Balance") { itemBalances[k] = q; } 
-          else if (t.type === "In") { itemBalances[k] += (q + adj); } 
-          else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
-          t.runningBalance = Math.round(itemBalances[k] * 1000) / 1000;
-      });
+runningBalData.forEach(t => {
+      let k = getItemBalanceKey(t);
+      if (!itemBalances[k]) itemBalances[k] = 0;
+      let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
+      if (t.type === "Opening Balance") { itemBalances[k] = q; } 
+      else if (t.type === "In") { itemBalances[k] += (q + adj); } 
+      else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
+      t.runningBalance = Math.round(itemBalances[k] * 1000) / 1000;
+  });
 
 if (searchText !== "") {
         let searchLower = searchText.toLowerCase();
