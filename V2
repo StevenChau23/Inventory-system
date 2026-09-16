@@ -519,33 +519,40 @@
 
 if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
 
-          // -- 修正: 先檢查資料庫是否已有相同物品，防止建立重覆物品 --
+// -- 修正: 先檢查資料庫是否已有相同物品，防止建立重覆物品 --
           let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
           let foundExisting = false;
           
+          const checkMatch = (mHa, mCat, mDesc) => {
+              let matchCount = 0;
+              if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2; // HA Code 相同視為強匹配
+              if (nCat && mCat === nCat) matchCount += 1;
+              if (nDesc && mDesc === nDesc) matchCount += 1;
+              return matchCount >= 2; // 三項條件中至少有兩項符合，或 HA Code 相符，即視為同一物品
+          };
+
           for (let m of masterItemsData) {
               let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
-              if ((nHa && nHa !== 'na' && mHa === nHa) || (nCat && nDesc && mCat === nCat && mDesc === nDesc)) {
-                  haCode = m.code !== 'NA' ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
+              if (checkMatch(mHa, mCat, mDesc)) {
+                  haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
                   foundExisting = true; break;
               }
           }
           if (!foundExisting) {
               for (let t of transactionsData) {
                   let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
-                  if ((nHa && nHa !== 'na' && tHa === nHa) || (nCat && nDesc && tCat === nCat && tDesc === nDesc)) {
-                      haCode = t.haCode !== 'NA' ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
+                  if (checkMatch(tHa, tCat, tDesc)) {
+                      haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
                       foundExisting = true; break;
                   }
               }
           }
           if (!foundExisting) {
               try {
-                  await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom });
-                  masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom });
+                  await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
+                  masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
               } catch(e) {}
           }
-
           let finalItemName = (haCode && haCode !== "NA") ? haCode : [catNo, desc].filter(Boolean).join(" | ");
           if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
           let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
@@ -584,16 +591,28 @@ if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
              importCount++;
           }
 
-          for (let m = 0; m < monthBlocks.length; m++) {
+for (let m = 0; m < monthBlocks.length; m++) {
             let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
             let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
+            
+            let expectedBal = currentBal + mIn - mOut;
+            let mBal = expectedBal; // 預設使用理論結餘，防止 Excel 欄位漏填導致跳過運算
+            
             let mBalStr = cells[monthBlocks[m].bal];
-            if (mBalStr === undefined || mBalStr === null || String(mBalStr).trim() === "") continue;
-            let mBal = parseFloat(String(mBalStr).replace(/,/g, '')); if (isNaN(mBal)) continue;
+            if (mBalStr !== undefined && mBalStr !== null && String(mBalStr).trim() !== "") {
+                let parsedBal = parseFloat(String(mBalStr).replace(/,/g, ''));
+                if (!isNaN(parsedBal)) mBal = parsedBal;
+            }
 
-            let expectedBal = currentBal + mIn - mOut; let remarksOut = ""; let remarksIn = ""; let sysAdjust = 0;
+            let sysAdjust = 0; let remarksOut = ""; let remarksIn = "";
             if (expectedBal > mBal) { sysAdjust = -(expectedBal - mBal); remarksOut = "系統調整 (數量短缺/過期掉棄)"; } 
             else if (expectedBal < mBal) { sysAdjust = mBal - expectedBal; remarksIn = "系統調整 (數量增加)"; }
+
+            // 如果該月沒有任何進出且沒有結餘誤差，則直接跳過不寫入紀錄
+            if (mIn === 0 && mOut === 0 && sysAdjust === 0) {
+                currentBal = mBal;
+                continue;
+            }
 
             let monthNum = m + 4; let calcYear = selectedYear;
             if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
@@ -796,8 +815,19 @@ if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
       
       let baseData = transactionsData.filter(t => (t.category || 'Consumable') === currentQueryCategory);
       
-      let runningBalData = [...baseData].sort((a, b) => new Date(a.date) - new Date(b.date));
-      let itemBalances = {};
+let runningBalData = [...baseData].sort((a, b) => {
+          let d1 = new Date(a.date).getTime(); let d2 = new Date(b.date).getTime();
+          if (d1 !== d2) return d1 - d2;
+          
+          let t1 = a.timestamp ? (a.timestamp.seconds ? a.timestamp.seconds * 1000 : new Date(a.timestamp).getTime()) : 0;
+          let t2 = b.timestamp ? (b.timestamp.seconds ? b.timestamp.seconds * 1000 : new Date(b.timestamp).getTime()) : 0;
+          if (t1 !== t2) return t1 - t2;
+          
+          if (a.type === "Opening Balance" && b.type !== "Opening Balance") return -1;
+          if (b.type === "Opening Balance" && a.type !== "Opening Balance") return 1;
+          return 0;
+      });
+let itemBalances = {};
       
       runningBalData.forEach(t => {
           let k = (t.haCode && t.haCode !== "NA") ? t.haCode : `${t.catNo}|${t.desc}`;
@@ -1585,8 +1615,13 @@ if (searchText !== "") {
             </div>
         </div>
 
+<div style="background:#e8f4f8; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bce0fd; display: flex; gap: 15px; align-items: center;">
+            <span style="font-weight: bold; color: #2980b9;">✅ 批次歸類所選物品：</span>
+            <button class="btn-primary" style="width: auto; background: #34495e;" onclick="batchUpdateCategory('Drape')">📦 歸類為 Drape</button>
+            <button class="btn-primary" style="width: auto; background: #bdc3c7; color: #2c3e50;" onclick="batchUpdateCategory('Consumable')">📦 歸類為 Consumable</button>
+        </div>
         <div class="excel-tip">💡 這裡是系統內所有已被登錄或建立過交易紀錄的 Item 清單。未登錄於總表但有紀錄的物品會提供「加入總表」按鈕。</div>
-        <div class="toolbar" style="justify-content: space-between;">
+<div class="toolbar" style="justify-content: space-between;">
           <div style="flex: 1; min-width: 250px; margin-right: 15px;">
             <input type="text" id="searchMaster" class="search-box" placeholder="輸入 Cat no / Description / Code 查詢..." oninput="renderMasterList()" style="margin-bottom:0;">
           </div>
