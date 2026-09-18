@@ -501,113 +501,140 @@ window.fixSystemBalances = async function() {
       loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; document.body.appendChild(loadingDiv);
 
       try {
-        let idxDesc = -1, idxCat = -1, idxCssd = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
-        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
-            let row = matrixRows[r] || [];
-            for (let c = 0; c < row.length; c++) {
-                let cellVal = String(row[c] || '').toLowerCase().trim();
-                if (cellVal.includes('description') || cellVal.includes('item description')) idxDesc = c;
-                if (cellVal.includes('cat no') || cellVal === 'cat' || cellVal.includes('cat. no') || cellVal.includes('cat.no')) idxCat = c;
-                if (cellVal.includes('ha item code') || cellVal.includes('ha item no') || cellVal.includes('ha code')) idxHaCode = c;
-                if (cellVal.includes('cssd code') || cellVal.includes('cssd')) idxCssd = c;
-                if (cellVal.includes('uom (box)') || cellVal.includes('uom(box)') || cellVal === 'uom' || cellVal.includes('uom')) { if (idxUom === -1 || cellVal.includes('box')) idxUom = c; }
-                if (cellVal.includes('opening balance') || cellVal.includes('open bal') || cellVal === 'open bal') idxOpenBal = c;
+let idxDesc = -1, idxCat = -1, idxCssd = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
+    for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+        let row = matrixRows[r] || [];
+        for (let c = 0; c < row.length; c++) {
+            let cellVal = String(row[c] || '').toLowerCase().trim();
+            if (cellVal.includes('description') || cellVal.includes('item description') || cellVal === 'desc') idxDesc = c;
+            if (cellVal.includes('cat no') || cellVal === 'cat' || cellVal.includes('cat. no') || cellVal.includes('cat.no') || cellVal.includes('category')) idxCat = c;
+            if (cellVal.includes('ha item code') || cellVal.includes('ha item no') || cellVal.includes('ha code') || cellVal.includes('ha item')) idxHaCode = c;
+            if (cellVal.includes('cssd code') || cellVal.includes('cssd no') || cellVal.includes('cssd')) idxCssd = c;
+            if (cellVal.includes('uom (box)') || cellVal.includes('uom(box)') || cellVal === 'uom' || cellVal.includes('uom')) { if (idxUom === -1 || cellVal.includes('box')) idxUom = c; }
+            if (cellVal.includes('opening balance') || cellVal.includes('open bal') || cellVal.includes('opening bal') || cellVal.includes('open balance') || cellVal.includes('opening') || cellVal.includes('open stock') || cellVal.includes('open qty') || cellVal.includes('期初')) idxOpenBal = c;
+        }
+    }
+
+    let monthBlocks = []; let headerRowIndex = 0;
+    for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+        let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().trim()) : []; let tempBlocks = [];
+        for (let i = 0; i < row.length - 2; i++) { 
+            let c1 = row[i], c2 = row[i+1], c3 = row[i+2];
+            if ((c1 === 'in' || c1.startsWith('in')) && (c2 === 'out' || c2.startsWith('out')) && (c3 === 'balance' || c3 === 'bal' || c3.startsWith('bal'))) { 
+                tempBlocks.push({ in: i, out: i+1, bal: i+2 }); 
+            } 
+        }
+        if (tempBlocks.length >= 12) { monthBlocks = tempBlocks.slice(-12); headerRowIndex = r; break;
+        } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { monthBlocks = tempBlocks; headerRowIndex = r; }
+    }
+
+    if (idxOpenBal === -1 && monthBlocks.length > 0) {
+        let firstInCol = monthBlocks[0].in;
+        for (let c = 0; c < firstInCol; c++) {
+            if (c !== idxCat && c !== idxDesc && c !== idxHaCode && c !== idxCssd && c !== idxUom) {
+                idxOpenBal = c;
+                break;
             }
         }
-        if (idxOpenBal === -1) idxOpenBal = 15; 
+    }
 
-        let monthBlocks = []; let headerRowIndex = 0;
-        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
-            let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().trim()) : []; let tempBlocks = [];
-            for (let i = 0; i < row.length - 2; i++) { if (row[i] === 'in' && row[i+1] === 'out' && (row[i+2] === 'balance' || row[i+2] === 'bal')) { tempBlocks.push({ in: i, out: i+1, bal: i+2 }); } }
-            if (tempBlocks.length >= 12) { monthBlocks = tempBlocks.slice(-12); headerRowIndex = r; break;
-            } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { monthBlocks = tempBlocks; headerRowIndex = r; }
-        }
+    let importCount = 0;
+    for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
+      let cells = matrixRows[r]; if (!cells || cells.length < 3) continue;
 
-        let importCount = 0;
-        for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
-          let cells = matrixRows[r]; if (!cells || cells.length < 3) continue;
+      let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
+      let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
+      let cssd = idxCssd !== -1 && cells[idxCssd] !== undefined ? String(cells[idxCssd]).trim() : "";
+      let uom = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
+      let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+      if ((!haCode || haCode === "NA" || haCode === "") && cssd) haCode = cssd;
+      if (!haCode || haCode.trim() === "") haCode = "NA";
 
-          let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
-          let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
-          let cssd = idxCssd !== -1 && cells[idxCssd] !== undefined ? String(cells[idxCssd]).trim() : "";
-          let uom = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
-          let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
-          if (!haCode || haCode.trim() === "") haCode = "NA";
+      if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
 
-if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
+      let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
+      let foundExisting = false;
+      
+      const checkMatch = (mHa, mCat, mDesc) => {
+          let matchCount = 0;
+          if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2;
+          if (nCat && mCat === nCat) matchCount += 1;
+          if (nDesc && mDesc === nDesc) matchCount += 1;
+          return matchCount >= 2;
+      };
 
-// -- 修正: 先檢查資料庫是否已有相同物品，防止建立重覆物品 --
-          let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
-          let foundExisting = false;
-          
-          const checkMatch = (mHa, mCat, mDesc) => {
-              let matchCount = 0;
-              if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2; // HA Code 相同視為強匹配
-              if (nCat && mCat === nCat) matchCount += 1;
-              if (nDesc && mDesc === nDesc) matchCount += 1;
-              return matchCount >= 2; // 三項條件中至少有兩項符合，或 HA Code 相符，即視為同一物品
-          };
-
-          for (let m of masterItemsData) {
-              let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
-              if (checkMatch(mHa, mCat, mDesc)) {
-                  haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
+      for (let m of masterItemsData) {
+          let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
+          if (checkMatch(mHa, mCat, mDesc)) {
+              haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
+              foundExisting = true; break;
+          }
+      }
+      if (!foundExisting) {
+          for (let t of transactionsData) {
+              let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
+              if (checkMatch(tHa, tCat, tDesc)) {
+                  haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
                   foundExisting = true; break;
               }
           }
-          if (!foundExisting) {
-              for (let t of transactionsData) {
-                  let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
-                  if (checkMatch(tHa, tCat, tDesc)) {
-                      haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
-                      foundExisting = true; break;
-                  }
-              }
-          }
-          if (!foundExisting) {
-              try {
-                  await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
-                  masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
-              } catch(e) {}
-          }
-          let finalItemName = (haCode && haCode !== "NA") ? haCode : [catNo, desc].filter(Boolean).join(" | ");
-          if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
-          let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
-          let openDate = `${selectedYear}-04-01`; 
+      }
+      if (!foundExisting) {
+          try {
+              await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
+              masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
+          } catch(e) {}
+      }
 
-          // -- 修正: 自動繼承歷史結餘，避免上傳新年度時導致結餘錯誤 --
-          let itemKey = (haCode && haCode !== "NA") ? haCode : `${catNo}|${desc}`;
-          let simulatedBal = 0;
-          let itemTxs = transactionsData.filter(t => {
-              let tk = (t.haCode && t.haCode !== "NA") ? t.haCode : `${t.catNo}|${t.desc}`;
-              return tk === itemKey && (t.category || 'Consumable') === selectedCategory;
-          });
-          itemTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
-          itemTxs.forEach(t => {
-              if (t.date < openDate) {
-                  let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0;
-                  if (t.type === "Opening Balance") simulatedBal = q;
-                  else if (t.type === "In") simulatedBal += (q + adj);
-                  else if (t.type === "Out") { simulatedBal -= q; simulatedBal += adj; }
-              }
-          });
+      let openBalVal = null;
+      if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
+          let rawStr = String(cells[idxOpenBal]).replace(/,/g, '').trim();
+          if (rawStr !== "" && !isNaN(parseFloat(rawStr))) {
+              openBalVal = parseFloat(rawStr);
+          }
+      }
 
-          let currentBal = simulatedBal;
-          let hasOpenBalInExcel = false;
-          if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
-              let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim(); 
-              if (!isNaN(parseFloat(oVal))) { currentBal = parseFloat(oVal); hasOpenBalInExcel = true; }
+      let itemKey = (haCode && haCode !== "NA") ? normalizeCode(haCode) : `${normalizeCode(catNo)}|${normalizeCode(desc)}`;
+      let simulatedBal = 0;
+      let itemTxs = transactionsData.filter(t => {
+          let tk = (t.haCode && t.haCode !== "NA") ? normalizeCode(t.haCode) : `${normalizeCode(t.catNo)}|${normalizeCode(t.desc)}`;
+          return tk === itemKey && (t.category || 'Consumable') === selectedCategory;
+      });
+      itemTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
+      let openDate = `${selectedYear}-04-01`;
+
+      itemTxs.forEach(t => {
+          if (t.date < openDate) {
+              let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0;
+              if (t.type === "Opening Balance") simulatedBal = q;
+              else if (t.type === "In") simulatedBal += (q + adj);
+              else if (t.type === "Out") { simulatedBal -= q; simulatedBal += adj; }
           }
-          
-          let insertOpenBal = hasOpenBalInExcel || itemTxs.length === 0;
-          if (insertOpenBal && currentBal >= 0 && !isDuplicateTx(openDate, itemObj, "Opening Balance", currentBal)) {
-             await addDoc(collection(db, "transactions"), { 
-               category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-               type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00") 
-             });
-             importCount++;
+      });
+
+      let currentBal = (openBalVal !== null) ? openBalVal : simulatedBal;
+      
+      let finalItemName = (haCode && haCode !== "NA") ? haCode : [catNo, desc].filter(Boolean).join(" | ");
+      if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
+      let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
+
+      if (openBalVal !== null) {
+          if (!isDuplicateTx(openDate, itemObj, "Opening Balance", openBalVal)) {
+              await addDoc(collection(db, "transactions"), { 
+                category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
+                type: "Opening Balance", qty: openBalVal, remarks: "年度期初結餘(Excel)", timestamp: new Date(openDate + "T09:00:00") 
+              });
+              importCount++;
           }
+      } else if (itemTxs.length === 0) {
+          if (!isDuplicateTx(openDate, itemObj, "Opening Balance", 0)) {
+              await addDoc(collection(db, "transactions"), { 
+                category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
+                type: "Opening Balance", qty: 0, remarks: "年度期初結餘(預設)", timestamp: new Date(openDate + "T09:00:00") 
+              });
+              importCount++;
+          }
+      }
 
 for (let m = 0; m < monthBlocks.length; m++) {
             let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
