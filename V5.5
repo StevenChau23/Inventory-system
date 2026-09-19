@@ -1,1 +1,1897 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <title>Stock Take & Purchase 系統</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- 引入 SheetJS 解析 Excel 檔案 (.xlsx / .xls) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+    const firebaseConfig = {
+      apiKey: "AIzaSyC2iolu67xguBOEHnJ2cfb3_K-nwQdHACQ",
+      authDomain: "steven-b690f.firebaseapp.com",
+      projectId: "steven-b690f",
+      storageBucket: "steven-b690f.firebasestorage.app",
+      messagingSenderId: "1003575294244",
+      appId: "1:1003575294244:web:d2ac190431626b4b125bb1",
+      measurementId: "G-97R5HBQFTZ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    let myChart = null;
+    let transactionsData = []; 
+    let masterItemsData = []; 
+    let currentQueryCategory = 'Drape'; 
+    window.currentQueryData = []; // 用於暫存當前搜查結果以供匯出 Excel
+    window.chartMode = 'Both'; // 'In', 'Out', 'Both'
+    window.chartGroupBy = 'Month'; // 'Month', 'FY'
+
+    // --- 提取詳細資料的共用函數 ---
+    window.extractItemDetails = function(t) {
+        let mCode = t.haCode || "", mCat = t.catNo || "", mDesc = t.desc || "";
+        
+        if ((!mCat && !mDesc) && String(t.item).includes(" | ")) {
+            let parts = String(t.item).split(" | ");
+            mCat = parts[0] ? parts[0].trim() : "";
+            mDesc = parts[1] ? parts[1].trim() : "";
+            mCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
+        }
+
+        if (!mCat && !mDesc) {
+            let search = String(t.item).toLowerCase().replace(/[-_\s()]/g, '');
+            let foundMaster = masterItemsData.find(m => {
+                let c = (m.code || "").toLowerCase().replace(/[-_\s()]/g, ''); 
+                let cat = (m.catNo || "").toLowerCase().replace(/[-_\s()]/g, ''); 
+                let d = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                return (c && c === search) || (cat && cat === search) || (d && d === search);
+            });
+            if (foundMaster) { 
+                mCode = foundMaster.code || mCode; 
+                mCat = foundMaster.catNo || mCat; 
+                mDesc = foundMaster.desc || mDesc; 
+            }
+        }
+
+        if (!mCode || mCode.trim() === "" || mCode === "NA" || mCode.trim().toLowerCase() === mCat.trim().toLowerCase()) {
+            mCode = "NA";
+        }
+        return { mCat, mDesc, mCode };
+    }
+
+    // --- 視圖切換與登入控制 ---
+    window.showMainMenu = function() {
+        document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+        document.getElementById('mainMenu').classList.add('active');
+        document.getElementById('backBtn').style.display = 'none';
+        document.querySelector('.main-title').style.display = 'block';
+    }
+
+    window.showView = function(viewId) {
+        document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+        document.getElementById(viewId).classList.add('active');
+        document.getElementById('backBtn').style.display = 'inline-flex';
+        document.querySelector('.main-title').style.display = 'none';
+
+        if(viewId === 'view-purchase') loadPurchaseList();
+        if(viewId === 'view-expiry') renderExpiryTable();
+        if(viewId === 'view-master') renderMasterList();
+        if(viewId === 'view-query') filterHistory(); 
+    }
+
+    window.openLoginModal = function() {
+        document.getElementById('loginModal').style.display = 'flex';
+    }
+
+    window.closeLoginModal = function() {
+        document.getElementById('loginModal').style.display = 'none';
+        document.getElementById('adminUser').value = '';
+        document.getElementById('adminPwd').value = '';
+    }
+
+    window.verifyAdmin = function() {
+        const user = document.getElementById('adminUser').value;
+        const pwd = document.getElementById('adminPwd').value;
+        if(user === 'tszfung' && pwd === '22080030') {
+            closeLoginModal();
+            showView('view-admin');
+        } else {
+            alert('❌ 帳戶名稱或密碼錯誤！');
+        }
+    }
+
+    // --- Drape / Consumable 數據切換 ---
+    window.setQueryCategory = function(cat) {
+        currentQueryCategory = cat;
+        document.getElementById('btn-cat-drape').style.background = (cat === 'Drape') ? '#34495e' : '#bdc3c7';
+        document.getElementById('btn-cat-drape').style.color = (cat === 'Drape') ? 'white' : '#2c3e50';
+        document.getElementById('btn-cat-consumable').style.background = (cat === 'Consumable') ? '#34495e' : '#bdc3c7';
+        document.getElementById('btn-cat-consumable').style.color = (cat === 'Consumable') ? 'white' : '#2c3e50';
+        filterHistory();
+    };
+
+    window.setImportCategory = function(cat) {
+        document.getElementById('selectedImportCategory').value = cat;
+        document.getElementById('import-btn-drape').style.background = (cat === 'Drape') ? '#34495e' : '#bdc3c7';
+        document.getElementById('import-btn-drape').style.color = (cat === 'Drape') ? 'white' : '#2c3e50';
+        document.getElementById('import-btn-consumable').style.background = (cat === 'Consumable') ? '#34495e' : '#bdc3c7';
+        document.getElementById('import-btn-consumable').style.color = (cat === 'Consumable') ? 'white' : '#2c3e50';
+    };
+
+    function parseTSV(text) {
+        if (!text) return [];
+        let rows = []; let currentRow = []; let currentCell = ''; let insideQuotes = false;
+        for (let i = 0; i < text.length; i++) {
+            let char = text[i]; let nextChar = text[i + 1];
+            if (char === '"') {
+                if (insideQuotes && nextChar === '"') { currentCell += '"'; i++; } else { insideQuotes = !insideQuotes; }
+            } else if (char === '\t' && !insideQuotes) {
+                currentRow.push(currentCell.replace(/\r/g, '')); currentCell = '';
+            } else if (char === '\n' && !insideQuotes) {
+                currentRow.push(currentCell.replace(/\r/g, '')); rows.push(currentRow); currentRow = []; currentCell = '';
+            } else { currentCell += char; }
+        }
+        if (currentCell !== '' || currentRow.length > 0) { currentRow.push(currentCell.replace(/\r/g, '')); rows.push(currentRow); }
+        return rows;
+    }
+
+function normalizeCode(code) { 
+        // 強化過濾：移除所有非英數、非中文字元（忽略所有標點符號與空格），解決問題三
+        return (code || "").toString().replace(/[^\w\u4e00-\u9fa5]/g, '').toLowerCase().trim(); 
+    }
+
+    // 計算兩個字串的相似度 (Bigram 演算法)
+    function getSimilarity(s1, s2) {
+        if (!s1 || !s2) return 0;
+        let str1 = String(s1).toLowerCase().replace(/\s+/g, ''); 
+        let str2 = String(s2).toLowerCase().replace(/\s+/g, '');
+        if (str1 === str2) return 1.0;
+        if (str1.length < 2 || str2.length < 2) return 0.0;
+        let match = 0;
+        for(let i=0; i<str1.length-1; i++) { if(str2.includes(str1.substring(i, i+2))) match++; }
+        return (2.0 * match) / (str1.length - 1 + str2.length - 1);
+    }
+
+    // 彈出視窗讓使用者選擇相似物品
+    window.askSimilarityMatch = function(newDesc, newCat, oldDesc, oldCat) {
+        return new Promise(resolve => {
+            const modal = document.createElement('div');
+            modal.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10000;display:flex;justify-content:center;align-items:center;";
+            modal.innerHTML = `
+                <div style="background:white;padding:25px;border-radius:10px;width:400px;text-align:center;box-shadow:0 5px 15px rgba(0,0,0,0.3);">
+                    <h3 style="color:#e67e22;margin-top:0;">⚠️ 發現相似物品</h3>
+                    <p style="font-size:14px;text-align:left;color:#555;">新上傳的 Excel 項目：<br><strong>Cat:</strong> ${newCat}<br><strong>Desc:</strong> ${newDesc}</p>
+                    <p style="font-size:14px;text-align:left;color:#555;">Master List 現有項目：<br><strong>Cat:</strong> ${oldCat}<br><strong>Desc:</strong> ${oldDesc}</p>
+                    <p style="color:#2c3e50;font-weight:bold;margin-bottom:20px;">這兩個是同一個物品嗎？</p>
+                    <button id="btnSame" style="background:#3498db;color:white;border:none;padding:10px 15px;border-radius:5px;cursor:pointer;margin-bottom:10px;width:100%;">第一：視為原 Master List 內同一物品</button>
+                    <button id="btnNew" style="background:#2ecc71;color:white;border:none;padding:10px 15px;border-radius:5px;cursor:pointer;width:100%;">第二：新增為新 Item 並加入 Master List</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('btnSame').onclick = () => { document.body.removeChild(modal); resolve(true); };
+            document.getElementById('btnNew').onclick = () => { document.body.removeChild(modal); resolve(false); };
+        });
+    };
+    function isSameItem(item1, item2) {
+      let c1 = normalizeCode(item1.item); let c2 = normalizeCode(item2.item);
+      let d1 = normalizeCode(item1.desc); let d2 = normalizeCode(item2.desc);
+      let cat1 = normalizeCode(item1.catNo); let cat2 = normalizeCode(item2.catNo);
+      let ha1 = normalizeCode(item1.haCode); let ha2 = normalizeCode(item2.haCode);
+
+      if (c1 && c2 && c1 === c2) return true;
+      if (ha1 && ha2 && ha1 !== 'na' && ha2 !== 'na' && ha1 === ha2) return true;
+      let combo1 = cat1 + "|" + d1; let combo2 = cat2 + "|" + d2;
+      if (combo1 === combo2 && combo1 !== "|") return true;
+      return false;
+    }
+window.getItemBalanceKey = function(t) {
+        let { mCat, mDesc, mCode } = extractItemDetails(t);
+        let c = normalizeCode(mCode);
+        if (c && c !== "na") return "code:" + c;
+        let cat = normalizeCode(mCat);
+        let d = normalizeCode(mDesc);
+        if (cat || d) return "catdesc:" + cat + "|" + d;
+        return "raw:" + normalizeCode(t.item || "");
+    };
+    window.loadMasterItems = async function() {
+        try {
+            const querySnapshot = await getDocs(collection(db, "master_items"));
+            masterItemsData = [];
+            querySnapshot.forEach(doc => {
+                masterItemsData.push({ id: doc.id, ...doc.data() });
+            });
+        } catch (e) { console.error("加載總表失敗", e); }
+    }
+
+    window.formatItemName = function(rawItem) {
+        if(!rawItem) return "未知物品";
+        let search = String(rawItem).toLowerCase().replace(/[-_\s()]/g, '');
+        for(let m of masterItemsData) {
+            let mCode = (m.code || "").toLowerCase().replace(/[-_\s()]/g, '');
+            let mCat = (m.catNo || "").toLowerCase().replace(/[-_\s()]/g, '');
+            let mDesc = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+            if ((mCode && mCode === search) || (mCat && mCat === search) || (mDesc && mDesc === search)) {
+                let parts = []; if(m.catNo) parts.push(m.catNo); if(m.desc) parts.push(m.desc); if(m.code && m.code !== "NA") parts.push(m.code);
+                return parts.join(' | ');
+            }
+        }
+        return rawItem; 
+    }
+
+    window.showSuggestions = function(val) {
+        let box = document.getElementById("suggestionBox");
+        if (!val || val.trim() === "") { box.style.display = "none"; return; }
+        let search = val.toLowerCase().trim();
+        let uniqueMatches = new Map();
+
+        masterItemsData.forEach(m => {
+            let code = (m.code || "").toLowerCase(); let cat = (m.catNo || "").toLowerCase(); let desc = (m.desc || "").toLowerCase();
+            if (code.includes(search) || cat.includes(search) || desc.includes(search)) {
+                let label = [m.catNo, m.desc, m.code !== "NA" ? m.code : ""].filter(Boolean).join(" | ").replace(/\r?\n/g, ' ');
+                uniqueMatches.set(label, label);
+            }
+        });
+
+        transactionsData.forEach(t => {
+            if ((t.category || 'Consumable') !== currentQueryCategory) return;
+            let tItem = String(t.item || "").toLowerCase();
+            let mCode = (t.haCode || "").toLowerCase(); let mCat = (t.catNo || "").toLowerCase(); let mDesc = (t.desc || "").toLowerCase();
+            if (tItem.includes(search) || mCode.includes(search) || mCat.includes(search) || mDesc.includes(search)) {
+                 let label = [t.catNo, t.desc, (t.haCode && t.haCode !== "NA") ? t.haCode : ""].filter(Boolean).join(" | ").replace(/\r?\n/g, ' ');
+                 if(!label) label = String(t.item).replace(/\r?\n/g, ' ');
+                 uniqueMatches.set(label, label);
+            }
+        });
+
+        let matches = Array.from(uniqueMatches.values());
+        if (matches.length === 0) { box.style.display = "none"; return; }
+        
+        let html = "";
+        matches.forEach(label => {
+            html += `<div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; font-size:0.9rem;" 
+                          onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='#fff'"
+                          onclick="selectSuggestion('${label.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">
+                        ${label.replace(/</g, "&lt;").replace(/>/g, "&gt;")}
+                     </div>`;
+        });
+        box.innerHTML = html; box.style.display = "block";
+    }
+
+    window.selectSuggestion = function(selectedVal) {
+        document.getElementById("searchItem").value = selectedVal;
+        document.getElementById("suggestionBox").style.display = "none";
+        filterHistory(true); 
+    }
+
+    window.showAddItemSuggestions = function(val) {
+        let box = document.getElementById("addItemSuggestionBox");
+        updateCurrentBalanceDisplay(val); 
+        
+        if (!val || val.trim() === "") { box.style.display = "none"; return; }
+        let search = val.toLowerCase().trim();
+        let selectedCategory = document.getElementById("addCategory").value;
+        let uniqueMatches = new Map();
+
+        masterItemsData.forEach(m => {
+            let code = (m.code || "").toLowerCase(); let cat = (m.catNo || "").toLowerCase(); let desc = (m.desc || "").toLowerCase();
+            if (code.includes(search) || cat.includes(search) || desc.includes(search)) {
+                let label = [m.catNo, m.desc, m.code !== "NA" ? m.code : ""].filter(Boolean).join(" | ").replace(/\r?\n/g, ' ');
+                uniqueMatches.set(label, label);
+            }
+        });
+
+        transactionsData.forEach(t => {
+            if ((t.category || 'Consumable') !== selectedCategory) return;
+            let tItem = String(t.item || "").toLowerCase();
+            let mCode = (t.haCode || "").toLowerCase(); let mCat = (t.catNo || "").toLowerCase(); let mDesc = (t.desc || "").toLowerCase();
+            if (tItem.includes(search) || mCode.includes(search) || mCat.includes(search) || mDesc.includes(search)) {
+                 let label = [t.catNo, t.desc, (t.haCode && t.haCode !== "NA") ? t.haCode : ""].filter(Boolean).join(" | ").replace(/\r?\n/g, ' ');
+                 if(!label) label = String(t.item).replace(/\r?\n/g, ' ');
+                 uniqueMatches.set(label, label);
+            }
+        });
+
+        let matches = Array.from(uniqueMatches.values());
+        if (matches.length === 0) { box.style.display = "none"; return; }
+        
+        let html = "";
+        matches.forEach(label => {
+            html += `<div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; font-size:0.9rem;" 
+                          onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='#fff'"
+                          onclick="selectAddItemSuggestion('${label.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">
+                        ${label.replace(/</g, "&lt;").replace(/>/g, "&gt;")}
+                     </div>`;
+        });
+        box.innerHTML = html; box.style.display = "block";
+    }
+
+    window.selectAddItemSuggestion = function(selectedVal) {
+        document.getElementById("item").value = selectedVal;
+        document.getElementById("addItemSuggestionBox").style.display = "none";
+        updateCurrentBalanceDisplay(selectedVal); 
+    }
+    
+    window.updateCurrentBalanceDisplay = function(itemName) {
+        const display = document.getElementById('currentItemBalance');
+        if(!itemName || itemName.trim() === "") { display.innerHTML = ""; return; }
+        
+        let bal = 0;
+        let category = document.getElementById('addCategory').value;
+        let searchRaw = itemName.toLowerCase().replace(/[-_\s()|]/g, '');
+
+        let sortedData = [...transactionsData]
+            .filter(t => (t.category || 'Consumable') === category)
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+let targetKey = getItemBalanceKey({ item: itemName, category: category });
+
+        sortedData.forEach(t => {
+            let tKey = getItemBalanceKey(t);
+            if(tKey === targetKey) {
+                let q = parseFloat(t.qty) || 0;
+                let adj = parseFloat(t.sysAdjust) || 0;
+                if(t.type === 'Opening Balance') { bal = q; }
+                else if(t.type === 'In') { bal += (q + adj); }
+                else if(t.type === 'Out') { bal -= q; bal += adj; }
+            }
+        });
+        
+        let currentBal = bal;
+        let expectedBal = bal;
+        let inputQty = parseFloat(document.getElementById('qty').value) || 0;
+        let inputType = document.getElementById('type').value;
+
+        if(inputQty > 0) {
+            if(inputType === 'In' || inputType === 'Opening Balance') expectedBal += inputQty;
+            else if(inputType === 'Out') expectedBal -= inputQty;
+        }
+
+        let currentStr = `💡 當前系統結餘估算: <strong style="font-size:1.1em; color:#2c3e50;">${Math.round(currentBal * 1000) / 1000}</strong>`;
+        let expectedStr = "";
+
+        if (inputQty > 0) {
+            let exColor = expectedBal < 0 ? "#e74c3c" : "#27ae60";
+            expectedStr = `<span style="margin-left:15px; border-left:2px solid #ccc; padding-left:15px;">👉 預計提交後更新為: <strong style="font-size:1.3em; color:${exColor};">${Math.round(expectedBal * 1000) / 1000}</strong></span>`;
+        }
+        
+        display.innerHTML = currentStr + expectedStr;
+    }
+
+    document.addEventListener("click", function(e) {
+        let box = document.getElementById("suggestionBox"); let input = document.getElementById("searchItem");
+        if (box && input && e.target !== box && e.target !== input && !box.contains(e.target)) box.style.display = "none";
+
+        let addBox = document.getElementById("addItemSuggestionBox"); let addInput = document.getElementById("item");
+        if (addBox && addInput && e.target !== addBox && e.target !== addInput && !addBox.contains(e.target)) addBox.style.display = "none";
+    });
+
+    document.getElementById('stockForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.innerText = "寫入中..."; submitBtn.disabled = true;
+
+      let rawItem = document.getElementById('item').value.trim();
+      let p_catNo = "", p_desc = "", p_haCode = "";
+      if (rawItem.includes(" | ")) {
+          let parts = rawItem.split(" | ");
+          p_catNo = parts[0] ? parts[0].trim() : "";
+          p_desc = parts[1] ? parts[1].trim() : "";
+          p_haCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
+      }
+
+      const data = {
+        category: document.getElementById('addCategory').value,
+        date: document.getElementById('date').value,
+        item: rawItem,
+        catNo: p_catNo,
+        desc: p_desc,
+        haCode: p_haCode,
+        type: document.getElementById('type').value,
+        qty: parseFloat(document.getElementById('qty').value),
+        packSize: document.getElementById('packSize')?.value.trim() || "",
+        remarks: document.getElementById('remarks')?.value.trim() || "",
+        lotNo: document.getElementById('lotNo')?.value.trim() || "",
+        expiryDate: document.getElementById('expiryDate')?.value || "",
+        poNo: document.getElementById('poNo')?.value.trim() || "",
+        timestamp: new Date()
+      };
+
+      try {
+        await addDoc(collection(db, "transactions"), data);
+        submitBtn.innerText = "提交成功！"; submitBtn.style.backgroundColor = "#28a745";
+        setTimeout(() => { submitBtn.innerText = "提交紀錄"; submitBtn.style.backgroundColor = ""; submitBtn.disabled = false; }, 2000);
+        document.getElementById('stockForm').reset();
+        document.getElementById('currentItemBalance').innerHTML = ""; 
+        loadStockData(); 
+      } catch (error) { console.error(error); alert("寫入失敗"); submitBtn.disabled = false; submitBtn.innerText = "提交紀錄"; }
+    });
+
+function findDuplicateTx(date, itemObj, type) {
+      // 修改為 find() 讓系統能取得具體的紀錄 ID 和數量，解決匯入 Excel 失敗的問題
+      return transactionsData.find(t => 
+        t.date === date && t.type === type && 
+        (t.category || 'Consumable') === (itemObj.category || 'Consumable') && isSameItem(t, itemObj)
+      );
+    }
+
+    // --- 管理員操作功能 ---
+    window.handleMasterPaste = async function(e) {
+      const clipboardData = e.clipboardData || window.clipboardData; const pastedData = clipboardData.getData('Text');
+      if (!pastedData || !pastedData.includes('\t')) return; e.preventDefault();
+      
+      const rows = parseTSV(pastedData).filter(row => row.some(cell => cell.trim() !== ''));
+      if(!confirm(`確定要匯入 ${rows.length - 1} 行資料作為「物品總表參照」嗎？\n(這將覆蓋舊有總表)`)) return;
+
+      const loadingDiv = document.createElement('div');
+      loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#333; color:#fff; padding:10px 20px; border-radius:5px; z-index:9999;";
+      loadingDiv.innerText = "正在匯入並更新總表資料庫..."; document.body.appendChild(loadingDiv);
+
+      try {
+        const snapshot = await getDocs(collection(db, "master_items"));
+        for (let docSnap of snapshot.docs) await deleteDoc(doc(db, "master_items", docSnap.id));
+
+        for(let i = 1; i < rows.length; i++) { 
+          let cells = rows[i];
+          if (cells.length >= 4) {
+              let code = cells[0] ? cells[0].trim() : ""; let desc = cells[1] ? cells[1].trim() : ""; let catNo = cells[3] ? cells[3].trim() : "";
+              if(!code) code = "NA";
+              if(code || desc || catNo) await addDoc(collection(db, "master_items"), { code, desc, catNo });
+          }
+        }
+        document.body.removeChild(loadingDiv); alert(`🎉 總表匯入成功！`); await loadMasterItems();
+        if(transactionsData.length > 0) filterHistory(); document.getElementById('masterPasteArea').value = '';
+      } catch (err) { console.error(err); document.body.removeChild(loadingDiv); alert("匯入總表失敗"); }
+    }
+
+    window.deleteAllData = async function() {
+        if(!confirm("⚠️ 警告：這將會刪除系統中「所有」的庫存紀錄！\n如需重新匯入全部 Excel 以對齊結餘，請確認執行。\n確定要繼續嗎？（此操作無法復原）")) return;
+        if(prompt("請輸入 'DELETE' 以確認刪除所有數據：") !== 'DELETE') { alert("已取消刪除。"); return; }
+        
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e74c3c; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+        loadingDiv.innerText = "🗑️ 正在清空所有庫存資料，請稍候..."; document.body.appendChild(loadingDiv);
+
+        try {
+            const snapshot = await getDocs(collection(db, "transactions")); let count = 0;
+            for (let docSnap of snapshot.docs) { await deleteDoc(doc(db, "transactions", docSnap.id)); count++; }
+            document.body.removeChild(loadingDiv); alert(`✅ 已成功刪除 ${count} 筆紀錄！現在系統已清空，請重新匯入你的 Excel。`); loadStockData();
+        } catch (e) { console.error(e); if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); alert("❌ 刪除失敗"); }
+    }
+
+    window.cleanGarbageData = async function() {
+        if(!confirm("⚠️ 確定要刪除系統中物品名稱為「7」、「8」或「9」的異常紀錄嗎？")) return;
+        document.body.style.cursor = 'wait';
+        let toDelete = transactionsData.filter(t => ["7", "8", "9"].includes(String(t.item || "").trim()));
+        if(toDelete.length === 0) { alert("✅ 系統中沒有名稱為 7, 8, 9 的異常數據。"); document.body.style.cursor = 'default'; return; }
+        if(confirm(`👀 發現 ${toDelete.length} 筆異常數據！點擊確定即可刪除。`)) {
+            for (let t of toDelete) await deleteDoc(doc(db, "transactions", t.id));
+            alert(`🎉 成功清除 ${toDelete.length} 筆異常數據！`); loadStockData();
+        }
+        document.body.style.cursor = 'default';
+    }
+
+    window.cleanDuplicates = async function() {
+        if(!confirm("⚠️ 系統將掃描並刪除重覆數據。\n確認執行？")) return;
+        document.body.style.cursor = 'wait';
+        let toDelete = []; let kept = [];
+        let sortedData = [...transactionsData].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        for (let t of sortedData) {
+            let isDup = kept.some(k => k.date === t.date && k.type === t.type && k.qty === t.qty && (k.sysAdjust || 0) === (t.sysAdjust || 0) && (k.category || 'Consumable') === (t.category || 'Consumable') && isSameItem(k, t) );
+            if (isDup) toDelete.push(t.id); else kept.push(t);
+        }
+        
+        if(toDelete.length === 0) { alert("✅ 系統中沒有重覆數據。"); document.body.style.cursor = 'default'; return; }
+        if(confirm(`👀 發現 ${toDelete.length} 筆重覆數據！點擊確定刪除。`)) {
+            for (let id of toDelete) await deleteDoc(doc(db, "transactions", id));
+            alert(`🎉 成功清除 ${toDelete.length} 筆重覆數據！`); loadStockData();
+        }
+        document.body.style.cursor = 'default';
+    }
+window.fixSystemBalances = async function() {
+        if(!confirm("⚠️ 確定要執行「修正結餘運算」嗎？\n這將會清除系統中異常的自動調整數 (sysAdjust)，強制以真實的 In / Out 數量重新計算結餘！")) return;
+        document.body.style.cursor = 'wait';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e67e22; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+        loadingDiv.innerText = "🛠 正在修復結餘運算，清除異常調整數中..."; 
+        document.body.appendChild(loadingDiv);
+
+        try {
+            let count = 0;
+            for (let t of transactionsData) {
+                if (t.sysAdjust && t.sysAdjust !== 0) {
+                    await updateDoc(doc(db, "transactions", t.id), { sysAdjust: 0 });
+                    count++;
+                }
+            }
+            document.body.removeChild(loadingDiv);
+            alert(`✅ 結餘修復完成！共移除了 ${count} 筆隱藏的異常調整數。\n系統現在會根據正常的加減邏輯 (例如 51-15=36) 顯示結餘。`);
+            loadStockData();
+        } catch (e) {
+            console.error(e);
+            if(document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv);
+            alert("❌ 修復失敗，請檢查網絡連接。");
+        }
+        document.body.style.cursor = 'default';
+    }
+
+    function autoDetectYearFromFileName(fileName) {
+      if (!fileName) return null; let match = fileName.match(/(20\d{2})[-_](20\d{2})/);
+      if (match) return parseInt(match[1]); match = fileName.match(/(20\d{2})/);
+      if (match) return parseInt(match[1]); return null;
+    }
+
+// 通用處理 Stock Take Excel 數據矩陣 (融合 upload.txt 對齊演算法與 index_12.html 分類匹配)
+    async function processStockMatrix(matrixRows, fileName = "") {
+      let detectedYear = autoDetectYearFromFileName(fileName);
+      let yearSelect = document.getElementById('importYearSelect');
+      
+      // ===== 改動開始：自動判斷，若檔名年份不在選單內，自動新增該年份以防崩潰 =====
+      if (detectedYear) {
+          let optionExists = Array.from(yearSelect.options).some(opt => opt.value === detectedYear.toString());
+          if (!optionExists) {
+              let newOpt = document.createElement('option');
+              newOpt.value = detectedYear.toString();
+              newOpt.text = detectedYear + " 年度";
+              yearSelect.appendChild(newOpt);
+          }
+          yearSelect.value = detectedYear.toString();
+      }
+      // ===== 改動結束 =====
+
+      const selectedYear = parseInt(yearSelect.value);
+      
+      // ===== 改動開始：阻截無效年份 =====
+      if (isNaN(selectedYear)) {
+          alert("❌ 無法取得匯入年度，請確認下拉選單已選擇正確的年份！");
+          return;
+      }
+      // ===== 改動結束 =====
+
+      const selectedCategory = document.getElementById('selectedImportCategory').value;
+
+      if (!confirm(`系統將匯入至【${selectedCategory}】資料庫，為 ${selectedYear}-${selectedYear+1} 年度 (4月1日 至 隔年3月31日)。\n⚠️ 系統將以 Excel 上的結餘為準，若發生無 In/Out 紀錄但結餘變動的情況，系統將自動產生調整紀錄。\n是否確定繼續？`)) return;
+
+      const loadingDiv = document.createElement('div');
+      loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#27ae60; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold; box-shadow:0 4px 12px rgba(0,0,0,0.2);";
+      loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; 
+      document.body.appendChild(loadingDiv);
+
+      try {
+        let idxDesc = -1, idxCat = -1, idxHaCode = -1, idxOpenBal = -1;
+        
+        // 1. 掃描前 10 行尋找 Metadata 的確切欄位
+        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+            let row = matrixRows[r] || [];
+            for (let c = 0; c < row.length; c++) {
+                // 清除所有符號與空白，只比對英文字母與數字 (完美涵蓋所有大小寫和符號)
+                let cellVal = String(row[c] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (cellVal === 'itemdescription' || cellVal === 'description') idxDesc = c;
+                else if (cellVal === 'catno') idxCat = c;
+                else if (cellVal === 'cssdcode' || cellVal === 'haitemcode') idxHaCode = c;
+                else if (cellVal === 'openingbalance' || cellVal === 'openbal') idxOpenBal = c;
+            }
+        }
+
+        // 2. 找出 12 個月份的 In/Out/Balance 欄位群組
+        let monthBlocks = []; let headerRowIndex = 0;
+        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+            let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')) : []; 
+            let tempBlocks = [];
+            for (let i = 0; i < row.length - 2; i++) { 
+                let c1 = row[i], c2 = row[i+1], c3 = row[i+2];
+                // 涵蓋 Bal 或 Balance
+                if (c1 === 'in' && c2 === 'out' && (c3 === 'bal' || c3 === 'balance')) { 
+                    tempBlocks.push({ in: i, out: i+1, bal: i+2 }); 
+                } 
+            }
+            if (tempBlocks.length >= 12) { 
+                monthBlocks = tempBlocks.slice(-12); 
+                headerRowIndex = r; 
+                break;
+            } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { 
+                monthBlocks = tempBlocks; 
+                headerRowIndex = r; 
+            }
+        }
+
+        let importCount = 0;
+        for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
+          let cells = matrixRows[r]; 
+          if (!cells || cells.length < 3) continue;
+
+          let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
+          let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
+          let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+          
+          if (!haCode || haCode.trim() === "") haCode = "NA";
+          if (!catNo && !desc && haCode === "NA") continue;
+
+          // ===== 讀取期初結餘 (Opening Balance) =====
+          let currentBal = 0;
+          if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
+              let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim();
+              if (!isNaN(parseFloat(oVal))) currentBal = parseFloat(oVal);
+          }
+
+          // ===== 智能比對與重覆 item 提示功能 (保留 index_12 原本邏輯) =====
+          let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
+          let foundExisting = false;
+          let fuzzyMatchedMaster = null; 
+          
+const checkMatch = (mHa, mCat, mDesc) => {
+                  if (nHa && nHa !== 'na' && mHa === nHa) return true; 
+                  if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
+                  if (nCat && !nDesc) return (mCat === nCat);
+                  if (!nCat && nDesc) return (mDesc === nDesc);
+                  return false;
+              };
+
+          for (let m of masterItemsData) {
+              let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
+              if (checkMatch(mHa, mCat, mDesc)) {
+                  haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
+                  foundExisting = true; break;
+} else if (!foundExisting) {
+                  let strNew = String(catNo) + String(desc);
+                  let strOld = String(m.catNo || "") + String(m.desc || "");
+                  let sim = getSimilarity(strNew, strOld);
+                  // 提高純數字或短字串的門檻至 0.9，防止 41010057 和 41010058 被判定為同一物品
+                  let threshold = (strNew.length < 10 || /^\d+$/.test(strNew)) ? 0.9 : 0.8;
+                  if (sim >= threshold && sim < 1.0) { fuzzyMatchedMaster = m; }
+              }
+          }
+
+          if (!foundExisting && fuzzyMatchedMaster) {
+              let isSame = await window.askSimilarityMatch(desc, catNo, fuzzyMatchedMaster.desc, fuzzyMatchedMaster.catNo);
+              if (isSame) {
+                  haCode = fuzzyMatchedMaster.code !== 'NA' && fuzzyMatchedMaster.code !== "" ? fuzzyMatchedMaster.code : haCode; 
+                  catNo = fuzzyMatchedMaster.catNo || catNo; desc = fuzzyMatchedMaster.desc || desc;
+                  foundExisting = true;
+              }
+          }
+
+          if (!foundExisting) {
+              for (let t of transactionsData) {
+                  let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
+                  if (checkMatch(tHa, tCat, tDesc)) {
+                      haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; 
+                      catNo = t.catNo || catNo; 
+                      desc = t.desc || desc;
+                      foundExisting = true;
+                      break;
+                  }
+              }
+          }
+          // ==============================================================
+
+          let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
+          if (!finalItemName) finalItemName = catNo || desc || haCode;
+          let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
+
+// 寫入期初結餘 (Opening Balance)
+          let openDate = `${selectedYear}-04-01`; 
+          let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
+          if (!existingOpen && currentBal > 0) {
+             let newTx = {
+                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                  type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00")
+              };
+             let docRef = await addDoc(collection(db, "transactions"), newTx);
+             transactionsData.push({ id: docRef.id, ...newTx }); // 更新本地緩存防重覆
+             importCount++;
+          } else if (existingOpen && existingOpen.qty !== currentBal) {
+             await updateDoc(doc(db, "transactions", existingOpen.id), { qty: currentBal });
+             existingOpen.qty = currentBal; // 更新本地緩存
+             importCount++;
+          }
+
+          // ===== 循序處理 12 個月份 (套用 upload.txt 強制對齊最終結餘演算法) =====
+          for (let m = 0; m < monthBlocks.length; m++) {
+            let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
+            let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
+            let mBalStr = cells[monthBlocks[m].bal];
+            
+            if (mBalStr === undefined || mBalStr === null || String(mBalStr).trim() === "") continue;
+            let mBal = parseFloat(String(mBalStr).replace(/,/g, ''));
+            if (isNaN(mBal)) continue;
+
+            let expectedBal = currentBal + mIn - mOut;
+            let remarksOut = ""; let remarksIn = "";
+            
+            if (expectedBal > mBal) {
+                let diff = expectedBal - mBal; mOut += diff; remarksOut = "系統調整 (數量短缺/過期掉棄)";
+            } else if (expectedBal < mBal) {
+                let diff = mBal - expectedBal; mIn += diff; remarksIn = "系統調整 (數量增加)";
+            }
+
+            let monthNum = m + 4; let calcYear = selectedYear;
+            if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
+            let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
+
+            if (mIn > 0) {
+                let existingIn = findDuplicateTx(importDate, itemObj, "In");
+                if (!existingIn) {
+                    let newTx = {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "In", qty: mIn, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00")
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
+                    importCount++;
+                } else if (existingIn.qty !== mIn) {
+                    await updateDoc(doc(db, "transactions", existingIn.id), { qty: mIn, remarks: remarksIn });
+                    existingIn.qty = mIn; existingIn.remarks = remarksIn;
+                    importCount++;
+                }
+            }
+            if (mOut > 0) {
+                let existingOut = findDuplicateTx(importDate, itemObj, "Out");
+                if (!existingOut) {
+                    let newTx = {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "Out", qty: mOut, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00")
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
+                    importCount++;
+                } else if (existingOut.qty !== mOut) {
+                    await updateDoc(doc(db, "transactions", existingOut.id), { qty: mOut, remarks: remarksOut });
+                    existingOut.qty = mOut; existingOut.remarks = remarksOut;
+                    importCount++;
+                }
+            }
+            currentBal = mBal; 
+          }
+            
+            // 更新目前結餘以供下個月份計算
+            currentBal = mBal; 
+          }
+        }
+        document.body.removeChild(loadingDiv);
+        alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增或更新 ${importCount} 筆交易紀錄。\n(所有物品的系統結餘已 100% 強制對齊 Excel)`);
+        loadStockData();
+      } catch (err) {
+        console.error(err); 
+        if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); 
+        alert("❌ 解析或匯入 Excel 失敗，請確認檔案格式是否正確。");
+      }
+    }
+
+    window.handleExcelFileUpload = function(e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const workbook = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+          const matrixRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "" });
+          processStockMatrix(matrixRows, file.name); e.target.value = '';
+        } catch (err) { console.error(err); alert("❌ 讀取 Excel 檔案失敗，請確定檔案格式正確。"); }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    window.handleStockExcelPaste = async function(e) {
+      const clipboardData = e.clipboardData || window.clipboardData; const pastedData = clipboardData.getData('Text');
+      if (!pastedData || !pastedData.includes('\t')) return; e.preventDefault();
+      const rows = parseTSV(pastedData).filter(row => row.some(cell => cell.trim() !== ''));
+      processStockMatrix(rows, "Paste_Data");
+    };
+
+    window.renderYearButtons = function() {
+      const container = document.getElementById('yearButtonsContainer');
+      if (!container) return;
+      const yearSet = new Set();
+      transactionsData.forEach(t => {
+        if (!t.date) return;
+        const parts = t.date.split('-');
+        if (parts.length >= 2) {
+          const y = parseInt(parts[0], 10); const m = parseInt(parts[1], 10);
+          if (!isNaN(y) && !isNaN(m)) { const fyStart = m >= 4 ? y : y - 1; yearSet.add(fyStart); }
+        }
+      });
+      const sortedYears = Array.from(yearSet).sort((a, b) => a - b);
+      let html = '';
+      sortedYears.forEach(startYear => {
+        const y1 = String(startYear).slice(-2); const y2 = String(startYear + 1).slice(-2);
+        html += `<button class="action-btn" style="background:#2c3e50; padding: 8px 12px; margin-right: 5px;" onclick="setFinancialYear(${startYear})">${y1}-${y2}</button>`;
+      });
+      container.innerHTML = html;
+    };
+
+    // --- 圖表顯示與 Toggle 邏輯 ---
+    window.setChartMode = function(mode) {
+        window.chartMode = mode;
+        document.getElementById('btn-chart-in').style.background = mode === 'In' ? '#27ae60' : '#bdc3c7';
+        document.getElementById('btn-chart-in').style.color = mode === 'In' ? 'white' : '#2c3e50';
+        document.getElementById('btn-chart-out').style.background = mode === 'Out' ? '#e74c3c' : '#bdc3c7';
+        document.getElementById('btn-chart-out').style.color = mode === 'Out' ? 'white' : '#2c3e50';
+        document.getElementById('btn-chart-both').style.background = mode === 'Both' ? '#34495e' : '#bdc3c7';
+        document.getElementById('btn-chart-both').style.color = mode === 'Both' ? 'white' : '#2c3e50';
+        filterHistory(false); 
+    }
+
+    // 新增：切換圖表是以月度還是年度顯示
+    window.setChartGroupBy = function(groupBy) {
+        window.chartGroupBy = groupBy;
+        document.getElementById('btn-group-month').style.background = groupBy === 'Month' ? '#34495e' : '#bdc3c7';
+        document.getElementById('btn-group-month').style.color = groupBy === 'Month' ? 'white' : '#2c3e50';
+        document.getElementById('btn-group-fy').style.background = groupBy === 'FY' ? '#34495e' : '#bdc3c7';
+        document.getElementById('btn-group-fy').style.color = groupBy === 'FY' ? 'white' : '#2c3e50';
+        filterHistory(false);
+    }
+
+    window.updateChart = function(filteredData, searchText = "") {
+      const chartCanvas = document.getElementById('usageChart');
+      if (!chartCanvas) return;
+      
+      let chartData = {};
+      let detectedUom = "";
+
+      filteredData.forEach(d => {
+          if (!d.date) return;
+          
+          // 嘗試抓取 UOM 顯示
+          if (searchText && !detectedUom && d.uom && d.uom !== "-" && d.uom !== "NA") {
+              detectedUom = d.uom;
+          }
+
+          let key = "";
+          if (window.chartGroupBy === 'FY') {
+              let dateObj = new Date(d.date);
+              let y = dateObj.getFullYear();
+              let m = dateObj.getMonth() + 1; // 1-12
+              key = m >= 4 ? `${y}-${(y+1).toString().slice(-2)}` : `${y-1}-${y.toString().slice(-2)}`;
+          } else {
+              // 月度顯示 (YYYY-MM)
+              let dateParts = d.date.split('-');
+              key = `${dateParts[0]}-${dateParts[1]}`; 
+          }
+          
+          if(!chartData[key]) chartData[key] = { in: 0, out: 0 };
+          let q = parseFloat(d.qty) || 0;
+          if (d.type === 'In') chartData[key].in += q;
+          if (d.type === 'Out' || (d.remarks || "").includes("過期")) chartData[key].out += q;
+      });
+
+      // 後備機制：如果過濾數據沒有抓到 UOM，到 Master 清單找找
+      if (searchText && !detectedUom) {
+          let searchLower = searchText.toLowerCase().trim();
+          for (let m of masterItemsData) {
+              if ( ((m.code || "").toLowerCase().includes(searchLower) || 
+                    (m.catNo || "").toLowerCase().includes(searchLower) || 
+                    (m.desc || "").toLowerCase().includes(searchLower)) && 
+                    m.uom && m.uom !== "-" && m.uom !== "NA" ) {
+                  detectedUom = m.uom;
+                  break;
+              }
+          }
+      }
+
+      let labels = Object.keys(chartData).sort();
+      let inValues = labels.map(k => chartData[k].in);
+      let outValues = labels.map(k => chartData[k].out);
+
+      let datasets = [];
+      if (window.chartMode === 'In' || window.chartMode === 'Both') {
+          datasets.push({ label: "總入庫量 (In)", data: inValues, backgroundColor: 'rgba(39, 174, 96, 0.8)', borderRadius: 4 });
+      }
+      if (window.chartMode === 'Out' || window.chartMode === 'Both') {
+          datasets.push({ label: "總出庫量 (Out)", data: outValues, backgroundColor: 'rgba(231, 76, 60, 0.8)', borderRadius: 4 });
+      }
+
+      let uomText = detectedUom ? ` (UOM: ${detectedUom})` : "";
+      let timeLabel = window.chartGroupBy === 'FY' ? '年度' : '月度';
+      let titleText = searchText ? `物品 "${searchText}" 的${timeLabel} In/Out 統計${uomText}` : `全部分類${timeLabel} In/Out 統計`;
+      
+      renderChart(labels, datasets, titleText);
+    };
+
+    function renderChart(labels, datasets, titleText) {
+      const chartCanvas = document.getElementById('usageChart');
+      if (!chartCanvas) return;
+      const ctx = chartCanvas.getContext('2d');
+      if (myChart) myChart.destroy();
+      myChart = new Chart(ctx, { 
+        type: 'bar', 
+        data: { labels: labels, datasets: datasets }, 
+        options: { 
+            responsive: true, maintainAspectRatio: false,
+            plugins: { title: { display: true, text: titleText, font: { size: 16 } } },
+            scales: { y: { beginAtZero: true } } 
+        } 
+      });
+    }
+
+    window.loadStockData = async function() {
+      const querySnapshot = await getDocs(query(collection(db, "transactions"), orderBy("timestamp", "desc")));
+      transactionsData = []; 
+      querySnapshot.forEach((docSnap) => { const data = docSnap.data(); data.id = docSnap.id; transactionsData.push(data); });
+      renderYearButtons(); filterHistory(); 
+      if (document.getElementById('view-expiry').classList.contains('active')) renderExpiryTable();
+    }
+
+    window.setFinancialYear = function(startYear) { document.getElementById('startDate').value = `${startYear}-04-01`; document.getElementById('endDate').value = `${startYear + 1}-03-31`; filterHistory(); }
+    
+    window.clearDateRange = function() { 
+        document.getElementById('startDate').value = ''; 
+        document.getElementById('endDate').value = ''; 
+        document.getElementById('searchItem').value = ''; 
+        filterHistory(); 
+    }
+
+    window.filterHistory = function(isExactMatch = false) {
+      const searchText = document.getElementById('searchItem').value.trim();
+      const startDate = document.getElementById('startDate').value; 
+      const endDate = document.getElementById('endDate').value;
+      
+      let baseData = transactionsData.filter(t => (t.category || 'Consumable') === currentQueryCategory);
+      
+let runningBalData = [...baseData].sort((a, b) => {
+          let d1 = new Date(a.date).getTime(); let d2 = new Date(b.date).getTime();
+          if (d1 !== d2) return d1 - d2;
+          
+          let t1 = a.timestamp ? (a.timestamp.seconds ? a.timestamp.seconds * 1000 : new Date(a.timestamp).getTime()) : 0;
+          let t2 = b.timestamp ? (b.timestamp.seconds ? b.timestamp.seconds * 1000 : new Date(b.timestamp).getTime()) : 0;
+          if (t1 !== t2) return t1 - t2;
+          
+          if (a.type === "Opening Balance" && b.type !== "Opening Balance") return -1;
+          if (b.type === "Opening Balance" && a.type !== "Opening Balance") return 1;
+          return 0;
+      });
+let itemBalances = {};
+      
+runningBalData.forEach(t => {
+      let k = getItemBalanceKey(t);
+      if (!itemBalances[k]) itemBalances[k] = 0;
+      let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
+      if (t.type === "Opening Balance") { itemBalances[k] = q; } 
+      else if (t.type === "In") { itemBalances[k] += (q + adj); } 
+      else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
+      t.runningBalance = Math.round(itemBalances[k] * 1000) / 1000;
+  });
+
+if (searchText !== "") {
+        let searchLower = searchText.toLowerCase();
+        let searchIsExact = isExactMatch || searchText.includes("|");
+        if (searchIsExact) {
+            let searchParts = searchText.split("|").map(s => s.trim().toLowerCase());
+            runningBalData = runningBalData.filter(t => {
+                let { mCat, mDesc, mCode } = extractItemDetails(t);
+                let fieldsToMatch = [ mCode.toLowerCase(), mCat.toLowerCase(), mDesc.toLowerCase(), String(t.item).toLowerCase() ];
+                return searchParts.every(part => { if (!part) return true; return fieldsToMatch.some(f => f.includes(part)); });
+            });
+        } else {
+            runningBalData = runningBalData.filter(t => {
+                let { mCat, mDesc, mCode } = extractItemDetails(t);
+                let fieldsToMatch = [ mCode.toLowerCase(), mCat.toLowerCase(), mDesc.toLowerCase(), String(t.item).toLowerCase() ];
+                return fieldsToMatch.some(field => field.includes(searchLower));
+            });
+        }
+      }
+
+      let finalDisplayData = runningBalData;
+      if (startDate) finalDisplayData = finalDisplayData.filter(t => t.date >= startDate);
+      if (endDate) finalDisplayData = finalDisplayData.filter(t => t.date <= endDate);
+
+      updateChart(finalDisplayData, searchText);
+
+      let totalIn = 0; let totalOut = 0; let totalOpening = 0;
+      finalDisplayData.forEach(t => {
+          let q = parseFloat(t.qty) || 0;
+          if (t.type === "Opening Balance") totalOpening += q;
+          else if (t.type === "In") totalIn += q;
+          else if (t.type === "Out") totalOut += q;
+      });
+
+      let currentBal = finalDisplayData.length > 0 ? finalDisplayData[finalDisplayData.length - 1].runningBalance : 0;
+      
+      finalDisplayData = finalDisplayData.reverse(); 
+      window.currentQueryData = finalDisplayData; 
+
+      let balanceHtml = "";
+      if (searchText !== "") {
+        let balanceColor = currentBal < 0 ? "#e74c3c" : "#27ae60";
+        let dateText = startDate && endDate ? `${startDate} 至 ${endDate}` : startDate ? `${startDate} 至今` : endDate ? `截至 ${endDate}` : "所有紀錄時間";
+        balanceHtml = `📦 物品 <strong>"${searchText}"</strong> 的統計：<br>
+                       <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 6px;">
+                         📅 期間 (${dateText}) ➜ 期初結餘(Opening): <b>${totalOpening}</b> | 期間入庫(In): <b>${totalIn}</b> | 期間出庫(Out): <b>${totalOut}</b>
+                       </div>
+                       <span style="font-size: 1.2rem; margin-top:10px; display:inline-block;">期末系統結餘 (Latest Balance): <strong style="color:${balanceColor}; font-size: 1.6rem;">${currentBal}</strong></span>`;
+      }
+
+      document.getElementById('balanceDisplay').innerHTML = balanceHtml;
+      renderHistoryTable(searchText === "" && startDate === "" && endDate === "" ? finalDisplayData.slice(0, 5) : finalDisplayData);
+    }
+
+    window.exportQueryExcel = function() {
+        if(!window.currentQueryData || window.currentQueryData.length === 0) {
+            alert("沒有可匯出的數據！"); return;
+        }
+        let exportData = window.currentQueryData.map(t => {
+            let { mCat, mDesc, mCode } = extractItemDetails(t);
+            return {
+                "日期 (Date)": t.date,
+                "類型 (Category)": t.category || "Consumable",
+                "Cat No": mCat,
+                "Description": mDesc,
+                "HA Item Code": mCode,
+                "紀錄類型 (Type)": t.type,
+                "數量 (Qty)": t.qty,
+                "當前結餘 (Running Balance)": t.runningBalance,
+                "Pack Size": t.packSize || "",
+                "Lot No": t.lotNo || "",
+                "PO No": t.poNo || "",
+                "過期日 (Expiry Date)": t.expiryDate || "",
+                "備註 (Remarks)": t.remarks || ""
+            };
+        });
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "庫存查詢結果");
+        XLSX.writeFile(wb, `Stock_Query_Result_${new Date().toISOString().slice(0,10)}.xlsx`);
+    };
+
+    window.exportQueryChart = function() {
+        const canvas = document.getElementById('usageChart');
+        if(!canvas) { alert("找不到圖表！"); return; }
+        const link = document.createElement('a');
+        link.download = `Stock_Chart_${new Date().toISOString().slice(0,10)}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    };
+
+    window.renderHistoryTable = function(data) {
+      const tbody = document.getElementById('historyTbody'); tbody.innerHTML = "";
+      if (data.length === 0) { tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>尚未有任何紀錄或查無資料</td></tr>"; return; }
+      
+      data.forEach(t => {
+        let tr = document.createElement('tr'); tr.id = `row-${t.id}`;
+        let typeColor = t.type === "In" ? "#27ae60" : t.type === "Out" ? "#e74c3c" : "#8e44ad"; 
+        let remarkText = t.remarks || ""; let remarkStyle = remarkText.includes("調整") || remarkText.includes("過期") ? "color: #e74c3c; font-weight: bold;" : "color: #7f8c8d;";
+        let balDisplay = t.runningBalance !== undefined ? t.runningBalance : "-";
+        
+        let { mCat, mDesc, mCode } = extractItemDetails(t);
+        mCode = mCode.replace(/\n/g, '<br>'); mCat = mCat.replace(/\n/g, '<br>'); mDesc = mDesc.replace(/\n/g, '<br>');
+        
+        let extraInfo = []; if(t.packSize) extraInfo.push(`Pack: ${t.packSize}`); if(t.lotNo) extraInfo.push(`Lot: ${t.lotNo}`); if(t.poNo) extraInfo.push(`PO: ${t.poNo}`); if(t.expiryDate) extraInfo.push(`Exp: ${t.expiryDate}`);
+        
+        tr.innerHTML = `
+          <td>${t.date}</td><td><strong>${mCat || '-'}</strong></td><td title="資料庫原始數據: ${t.item}">${mDesc || '-'}</td>
+          <td>${mCode}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td>${t.qty}</td>
+          <td style="font-size: 0.85rem; color: #555;">${extraInfo.length > 0 ? extraInfo.join('<br>') : '<span style="color:#ccc;">-</span>'}</td>
+          <td style="font-weight: bold; background-color: #fdfad5;">${balDisplay}</td><td style="${remarkStyle}">${remarkText}</td>
+          <td><button class="action-btn edit-btn" onclick="editRecord('${t.id}')">✏️</button><button class="action-btn del-btn" onclick="deleteRecord('${t.id}')">❌</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    window.editRecord = function(id) {
+      const record = transactionsData.find(t => t.id === id); const tr = document.getElementById(`row-${id}`);
+      tr.innerHTML = `
+        <td><input type="date" id="edit-date-${id}" value="${record.date}" class="inline-edit"></td>
+        <td colspan="3"><input type="text" id="edit-item-${id}" value="${record.item}" title="原始資料庫儲存代碼" class="inline-edit" style="width: 95%;"></td>
+        <td>
+            <select id="edit-category-${id}" class="inline-edit" style="margin-bottom:3px;">
+                <option value="Drape" ${record.category === 'Drape' ? 'selected' : ''}>Drape</option>
+                <option value="Consumable" ${(record.category || 'Consumable') === 'Consumable' ? 'selected' : ''}>Consumable</option>
+            </select><br>
+            <select id="edit-type-${id}" class="inline-edit">
+                <option value="Opening Balance" ${record.type === 'Opening Balance' ? 'selected' : ''}>Opening Balance</option>
+                <option value="In" ${record.type === 'In' ? 'selected' : ''}>In</option>
+                <option value="Out" ${record.type === 'Out' ? 'selected' : ''}>Out</option>
+            </select>
+        </td>
+        <td><input type="number" id="edit-qty-${id}" value="${record.qty}" class="inline-edit" style="width: 60px;" step="any"><input type="hidden" id="edit-sysAdjust-${id}" value="${record.sysAdjust || 0}"></td>
+        <td><input list="packSizeOptions" id="edit-packSize-${id}" value="${record.packSize || ''}" class="inline-edit" placeholder="Pack size" style="margin-bottom:3px;"><br><input type="text" id="edit-lot-${id}" value="${record.lotNo || ''}" class="inline-edit" placeholder="Lot No" style="margin-bottom:3px;"><br><input type="text" id="edit-po-${id}" value="${record.poNo || ''}" class="inline-edit" placeholder="PO No" style="margin-bottom:3px;"><br><input type="date" id="edit-exp-${id}" value="${record.expiryDate || ''}" class="inline-edit"></td>
+        <td>-</td><td><input type="text" id="edit-remarks-${id}" value="${record.remarks || ''}" class="inline-edit" placeholder="備註"></td>
+        <td><button class="action-btn save-btn" onclick="saveEdit('${id}')">💾</button><button class="action-btn cancel-btn" onclick="filterHistory()">取消</button></td>
+      `;
+    }
+
+    window.saveEdit = async function(id) {
+      const record = transactionsData.find(t => t.id === id);
+      const uDate = document.getElementById(`edit-date-${id}`).value; 
+      const uItem = document.getElementById(`edit-item-${id}`).value.trim();
+      const uCategory = document.getElementById(`edit-category-${id}`).value;
+      const uType = document.getElementById(`edit-type-${id}`).value; 
+      const uQty = parseFloat(document.getElementById(`edit-qty-${id}`).value);
+      
+      if (!uDate || !uItem || isNaN(uQty)) { alert("請填寫完整資訊！"); return; }
+      
+      let p_catNo = "", p_desc = "", p_haCode = "";
+      if (uItem.includes(" | ")) {
+          let parts = uItem.split(" | ");
+          p_catNo = parts[0] ? parts[0].trim() : "";
+          p_desc = parts[1] ? parts[1].trim() : "";
+          p_haCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
+      }
+
+      try { 
+        await updateDoc(doc(db, "transactions", id), { 
+            category: uCategory, date: uDate, item: uItem, 
+            catNo: p_catNo || record.catNo, desc: p_desc || record.desc, haCode: p_haCode || record.haCode, 
+            type: uType, qty: uQty, sysAdjust: parseFloat(document.getElementById(`edit-sysAdjust-${id}`).value) || 0, 
+            remarks: document.getElementById(`edit-remarks-${id}`).value, packSize: document.getElementById(`edit-packSize-${id}`).value.trim(), 
+            lotNo: document.getElementById(`edit-lot-${id}`).value.trim(), poNo: document.getElementById(`edit-po-${id}`).value.trim(), 
+            expiryDate: document.getElementById(`edit-exp-${id}`).value 
+        }); 
+        loadStockData(); 
+      } catch (e) { console.error(e); alert("更新失敗"); }
+    }
+
+    window.deleteRecord = async function(id) { if(confirm("⚠️ 確定要刪除這筆紀錄嗎？")) { try { await deleteDoc(doc(db, "transactions", id)); loadStockData(); } catch (e) { console.error(e); alert("刪除失敗"); } } }
+
+    window.renderExpiryTable = function() {
+      const tbody = document.getElementById('expiryTbody'); tbody.innerHTML = "";
+      let searchText = (document.getElementById('searchExpiry') ? document.getElementById('searchExpiry').value.trim().toLowerCase() : "");
+      let expiryData = transactionsData.filter(t => t.expiryDate && t.expiryDate.trim() !== "");
+      
+      let displayData = [];
+      expiryData.forEach(t => {
+          let { mCat, mDesc, mCode } = extractItemDetails(t);
+          let match = true;
+          if(searchText !== "") {
+              let fieldsToMatch = [ mCat.toLowerCase(), mDesc.toLowerCase(), mCode.toLowerCase(), String(t.item).toLowerCase() ];
+              match = fieldsToMatch.some(f => f.includes(searchText));
+          }
+          if(match) displayData.push({ ...t, mCat, mDesc, mCode });
+      });
+
+      displayData.sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+
+      if (displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='9' style='text-align:center;'>尚未有任何含有過期日的紀錄</td></tr>"; return; }
+
+      let today = new Date(); today.setHours(0,0,0,0);
+
+      displayData.forEach(t => {
+        let expDate = new Date(t.expiryDate); expDate.setHours(0,0,0,0);
+        let diffDays = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
+
+        let dateStyle = "color:#27ae60; font-weight:bold;"; 
+        let alarmText = "";
+        let bgStyle = "";
+
+        if (diffDays < 0) {
+            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+            alarmText = "<br><span style='font-size:0.8rem;'>已過期</span>";
+            bgStyle = "background-color: #fadbd8;";
+        } else if (diffDays <= 60) {
+            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+            alarmText = "<br><span style='font-size:0.8rem;'>🚨 2個月內</span>";
+            bgStyle = "background-color: #fadbd8;";
+        } else if (diffDays <= 90) {
+            dateStyle = "color:#d35400; font-weight:bold;"; // Orange
+            alarmText = "<br><span style='font-size:0.8rem;'>⚠️ 3個月內</span>";
+            bgStyle = "background-color: #fcf3cf;";
+        }
+
+        let typeColor = t.type === "In" ? "#27ae60" : t.type === "Out" ? "#e74c3c" : "#8e44ad";
+        
+        let tr = document.createElement('tr');
+        tr.innerHTML = `<td style="${dateStyle} ${bgStyle}">${t.expiryDate}${alarmText}</td>
+                        <td><strong>${t.mCat || '-'}</strong></td><td title="資料庫原始數據: ${t.item}">${t.mDesc || '-'}</td>
+                        <td>${t.mCode || '-'}</td><td>${t.lotNo || '-'}</td><td>${t.poNo || '-'}</td>
+                        <td>${t.qty}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td style="color:#7f8c8d; font-size:0.9rem;">${t.date}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    window.exportExpiryExcel = function() {
+      let expiryData = transactionsData.filter(t => t.expiryDate && t.expiryDate.trim() !== "").sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+      if(expiryData.length === 0) { alert("沒有可以匯出的過期日資料！"); return; }
+      
+      let csvContent = "\uFEFFExpiry Date,Cat No,Description,HA Item Code,Lot No,PO No,Qty,Type,Record Date\n";
+      expiryData.forEach(t => {
+          let { mCat, mDesc, mCode } = extractItemDetails(t);
+          let safeDesc = (mDesc || "").replace(/,/g, "，");
+          csvContent += `${t.expiryDate},${mCat},${safeDesc},${mCode},${t.lotNo || ''},${t.poNo || ''},${t.qty},${t.type},${t.date}\n`;
+      });
+      const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+      link.download = `Expiry_Records_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    }
+
+    // --- Master List 總表 CRUD 功能 ---
+    window.toggleAllMaster = function(checkbox) {
+        document.querySelectorAll('.master-checkbox').forEach(cb => cb.checked = checkbox.checked);
+    };
+
+    window.batchUpdateCategory = async function(newCategory) {
+        let selected = Array.from(document.querySelectorAll('.master-checkbox:checked')).map(cb => ({
+            id: cb.dataset.id, key: cb.dataset.key, isMaster: cb.dataset.ismaster === 'true',
+            cat: cb.dataset.cat, desc: cb.dataset.desc, code: cb.dataset.code
+        }));
+        
+        if (selected.length === 0) { alert("請先勾選要歸類的物品！"); return; }
+        if (!confirm(`確定要將選中的 ${selected.length} 個物品歸類為 ${newCategory} 嗎？\n(這將會同步更新所有相關的歷史紀錄)`)) return;
+
+        document.body.style.cursor = 'wait';
+        try {
+            for (let item of selected) {
+                if (item.isMaster && item.id) {
+                    await updateDoc(doc(db, "master_items", item.id), { category: newCategory });
+                } else {
+                    await addDoc(collection(db, "master_items"), { 
+                        catNo: item.cat !== '-' ? item.cat : '', desc: item.desc !== '-' ? item.desc : '', 
+                        code: item.code !== '-' ? item.code : 'NA', uom: '', category: newCategory
+                    });
+                }
+
+                let matchingTxs = transactionsData.filter(t => {
+                    let { mCat, mDesc, mCode } = extractItemDetails(t);
+                    return mCat === item.cat && mDesc === item.desc && (mCode === item.code || (mCode === 'NA' && item.code === '-'));
+                });
+                
+                for (let t of matchingTxs) {
+                    if (t.category !== newCategory) await updateDoc(doc(db, "transactions", t.id), { category: newCategory });
+                }
+            }
+            alert(`✅ 成功歸類 ${selected.length} 個物品為 ${newCategory}！`);
+            await loadMasterItems(); await loadStockData(); renderMasterList();
+        } catch(e) { console.error(e); alert("歸類失敗"); }
+        document.body.style.cursor = 'default';
+    };
+
+    window.renderMasterList = function() {
+        const tbody = document.getElementById('masterTbody');
+        tbody.innerHTML = "";
+        
+        const thead = tbody.parentElement.querySelector('thead tr');
+        if (thead && !thead.dataset.patched) {
+            thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
+            thead.dataset.patched = "true";
+        }
+
+        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
+        let allItemsMap = new Map();
+        
+        masterItemsData.forEach(m => {
+            let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
+            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: m.category || 'Master', isMaster: true });
+        });
+
+        transactionsData.forEach(t => {
+            let { mCat, mDesc, mCode } = extractItemDetails(t);
+            let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
+            if(!allItemsMap.has(key)) {
+                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
+            }
+        });
+
+        let displayData = Array.from(allItemsMap.values());
+        if(searchText) displayData = displayData.filter(d => d.cat.toLowerCase().includes(searchText) || d.desc.toLowerCase().includes(searchText) || d.code.toLowerCase().includes(searchText));
+        if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='7' style='text-align:center;'>無相符資料</td></tr>"; return; }
+
+        displayData.forEach(d => {
+            let tr = document.createElement('tr');
+            let rowId = d.id || d.key.replace(/[^a-zA-Z0-9]/g, '');
+            tr.id = `master-row-${rowId}`;
+            let catStyle = d.category === 'Drape' ? 'background:#34495e;color:white;padding:3px 8px;border-radius:4px;' : 
+                           d.category === 'Consumable' ? 'background:#bdc3c7;color:#2c3e50;padding:3px 8px;border-radius:4px;' : 
+                           'background:#f39c12;color:white;padding:3px 8px;border-radius:4px;';
+            
+            let actionHtml = '';
+            if (d.isMaster) {
+                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button> <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
+            } else {
+                actionHtml = `<button class="action-btn" style="background:#3498db;" onclick="addMissingToMaster('${d.cat.replace(/'/g, "\\'")}', '${d.desc.replace(/'/g, "\\'")}', '${d.code.replace(/'/g, "\\'")}', '${d.uom.replace(/'/g, "\\'")}')">➕ 加入總表</button>`;
+            }
+
+            let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
+
+            tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
+                            <td><span style="${catStyle}">${d.category}</span></td>
+                            <td style="font-weight:bold;">${d.cat}</td>
+                            <td>${d.desc}</td>
+                            <td>${d.code}</td>
+                            <td>${d.uom}</td>
+                            <td>${actionHtml}</td>`;
+            tbody.appendChild(tr);
+        });
+    };
+
+    window.addNewMasterItem = async function() {
+        let catNo = document.getElementById('newMasterCatNo').value.trim();
+        let desc = document.getElementById('newMasterDesc').value.trim();
+        let code = document.getElementById('newMasterHaCode').value.trim() || "NA";
+        let uom = document.getElementById('newMasterUom').value.trim();
+        if(!catNo && !desc) { alert("請至少填寫 Cat no 或 Description！"); return; }
+        try {
+            await addDoc(collection(db, "master_items"), { catNo, desc, code, uom });
+            alert("🎉 成功手動新增物品至總表！");
+            document.getElementById('newMasterCatNo').value = '';
+            document.getElementById('newMasterDesc').value = '';
+            document.getElementById('newMasterHaCode').value = '';
+            document.getElementById('newMasterUom').value = '';
+            await loadMasterItems();
+            renderMasterList();
+        } catch(e) { console.error(e); alert("❌ 新增失敗"); }
+    }
+
+    window.editMasterItem = function(id) {
+        const item = masterItemsData.find(m => m.id === id);
+        if(!item) return;
+        const tr = document.getElementById(`master-row-${id}`);
+        tr.innerHTML = `
+            <td><span style="background:#f39c12;color:white;padding:3px 8px;border-radius:4px;">Master</span></td>
+            <td><input type="text" id="edit-m-cat-${id}" value="${item.catNo || ''}" class="inline-edit"></td>
+            <td><input type="text" id="edit-m-desc-${id}" value="${item.desc || ''}" class="inline-edit" style="width: 95%;"></td>
+            <td><input type="text" id="edit-m-code-${id}" value="${item.code === 'NA' ? '' : item.code}" class="inline-edit"></td>
+            <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 80px;"></td>
+            <td>
+                <button class="action-btn save-btn" onclick="saveMasterItem('${id}')">💾</button>
+                <button class="action-btn cancel-btn" onclick="renderMasterList()">取消</button>
+            </td>
+        `;
+    };
+
+    window.saveMasterItem = async function(id) {
+        const catNo = document.getElementById(`edit-m-cat-${id}`).value.trim();
+        const desc = document.getElementById(`edit-m-desc-${id}`).value.trim();
+        const code = document.getElementById(`edit-m-code-${id}`).value.trim() || "NA";
+        const uom = document.getElementById(`edit-m-uom-${id}`).value.trim();
+
+        try {
+            await updateDoc(doc(db, "master_items", id), { catNo, desc, code, uom });
+            await loadMasterItems();
+            renderMasterList();
+        } catch(e) { console.error(e); alert("更新失敗"); }
+    };
+
+    window.deleteMasterItem = async function(id) {
+        if(!confirm("⚠️ 確定要從物資總表中永久刪除此物品嗎？")) return;
+        try {
+            await deleteDoc(doc(db, "master_items", id));
+            await loadMasterItems();
+            renderMasterList();
+        } catch(e) { console.error(e); alert("刪除失敗"); }
+    };
+
+    window.addMissingToMaster = async function(cat, desc, code, uom) {
+        try {
+            await addDoc(collection(db, "master_items"), { 
+                catNo: cat !== '-' ? cat : '', 
+                desc: desc !== '-' ? desc : '', 
+                code: code !== '-' ? code : 'NA', 
+                uom: uom !== '-' ? uom : '' 
+            });
+            alert("✅ 成功加入物資總表！");
+            await loadMasterItems();
+            renderMasterList();
+        } catch(e) { console.error(e); alert("新增失敗"); }
+    };
+
+    window.exportMasterExcel = function() {
+        const tbody = document.getElementById('masterTbody');
+        if(!tbody || tbody.rows.length === 0) { alert("沒有可以匯出的資料！"); return; }
+        
+        let exportData = [];
+        Array.from(tbody.rows).forEach(row => {
+            if(row.cells.length > 1) {
+                exportData.push({
+                    "Category": row.cells[0].innerText.trim(),
+                    "Cat No": row.cells[1].innerText.trim(),
+                    "Description": row.cells[2].innerText.trim(),
+                    "HA Item Code": row.cells[3].innerText.trim(),
+                    "UOM": row.cells[4].innerText.trim()
+                });
+            }
+        });
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Master List");
+        XLSX.writeFile(wb, `Master_List_${new Date().toISOString().slice(0,10)}.xlsx`);
+    };
+
+    const columns = [ "Item", "Instrument / Consumable", "HA Item No", "Contract Number", "Brand", "Supplier", "Cat No", "UOM", "UOM (Box)", "Unit Cost", "COA", "Total Qty (pcs)", "Total Qty (Box)", "Total Cost", "PR No.", "PO No.", "Rec Date", "Rec No" ];
+
+    window.addPurchaseRow = async function() {
+      const year = document.getElementById('purchaseYear').value; const newRowData = { year: year, timestamp: new Date() };
+      columns.forEach(col => newRowData[col] = "");
+      try { await addDoc(collection(db, "purchase_lists"), newRowData); loadPurchaseList(); } catch (error) { console.error("新增列失敗", error); }
+    };
+
+    window.loadPurchaseList = async function() {
+      const year = document.getElementById('purchaseYear').value; const tbody = document.getElementById('purchaseTbody');
+      tbody.innerHTML = "<tr><td colspan='19'>載入中...</td></tr>";
+      const querySnapshot = await getDocs(query(collection(db, "purchase_lists"), where("year", "==", year))); tbody.innerHTML = "";
+      if (querySnapshot.empty) { tbody.innerHTML = "<tr><td colspan='19' style='text-align:center;'>此年度尚無資料，請點擊「新增一列」或直接貼上 Excel 資料</td></tr>"; return; }
+
+      querySnapshot.forEach((docSnap) => {
+        const d = docSnap.data(); const id = docSnap.id; let tr = document.createElement('tr');
+        columns.forEach(col => {
+          let isReadonly = col === "Total Cost" ? "readonly class='readonly-input'" : "";
+          let inputType = (col === "Unit Cost" || col === "Total Qty (Box)") ? "number" : "text";
+          let td = document.createElement('td');
+          td.innerHTML = `<input type="${inputType}" id="${id}_${col}" value="${d[col] || ''}" ${isReadonly} onchange="updatePurchaseData('${id}', '${col}')" oninput="calcTotal('${id}', '${col}')">`;
+          tr.appendChild(td);
+        });
+        let statusTd = document.createElement('td'); statusTd.innerHTML = `<span id="status_${id}" style="color: green; font-size: 12px;">✔️</span>`; tr.appendChild(statusTd); tbody.appendChild(tr);
+      });
+    }
+
+    window.calcTotal = function(docId, colName) {
+      if(colName === "Unit Cost" || colName === "Total Qty (Box)") {
+        document.getElementById(`${docId}_Total Cost`).value = (parseFloat(document.getElementById(`${docId}_Unit Cost`).value) || 0) * (parseFloat(document.getElementById(`${docId}_Total Qty (Box)`).value) || 0);
+        updatePurchaseData(docId, "Total Cost");
+      }
+    };
+    
+    window.updatePurchaseData = async function(docId, colName) {
+      let statusIcon = document.getElementById(`status_${docId}`); if(statusIcon) statusIcon.innerText = "⏳";
+      try { await updateDoc(doc(db, "purchase_lists", docId), { [colName]: document.getElementById(`${docId}_${colName}`).value }); if(statusIcon) statusIcon.innerText = "✔️"; } 
+      catch (error) { if(statusIcon) statusIcon.innerText = "❌"; }
+    };
+
+    window.handleExcelPaste = async function(e) {
+      const clipboardData = e.clipboardData || window.clipboardData; const pastedData = clipboardData.getData('Text');
+      if (!pastedData || !pastedData.includes('\t')) return; e.preventDefault();
+      const rows = parseTSV(pastedData).filter(row => row.some(cell => cell.trim() !== ''));
+      const year = document.getElementById('purchaseYear').value;
+      if (!confirm(`偵測到你貼上了 ${rows.length} 行 Excel 資料，是否要選取匯入 ${year} 年度？`)) return;
+      const loadingDiv = document.createElement('div'); loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#333; color:#fff; padding:10px 20px; border-radius:5px; z-index:9999;";
+      loadingDiv.innerText = "正在批量匯入資料到 Firebase..."; document.body.appendChild(loadingDiv);
+
+      try {
+        for (let cells of rows) {
+          const newRowData = { year: year, timestamp: new Date() };
+          columns.forEach((col, index) => { newRowData[col] = cells[index] ? cells[index].trim() : ""; });
+          let cost = parseFloat(newRowData["Unit Cost"]) || 0; let qty = parseFloat(newRowData["Total Qty (Box)"]) || 0;
+          if(cost && qty) newRowData["Total Cost"] = cost * qty;
+          await addDoc(collection(db, "purchase_lists"), newRowData);
+        }
+        document.body.removeChild(loadingDiv); alert("🎉 批量匯入成功！"); loadPurchaseList();
+      } catch (err) { console.error(err); document.body.removeChild(loadingDiv); alert("❌ 匯入過程發生錯誤"); }
+    };
+
+    window.onload = () => {
+      loadMasterItems().then(() => { loadStockData(); });
+      const theadTr = document.getElementById('purchaseTheadTr');
+      columns.forEach(col => { let th = document.createElement('th'); th.innerText = col; theadTr.appendChild(th); });
+      let thStatus = document.createElement('th'); thStatus.innerText = "狀態"; theadTr.appendChild(thStatus);
+
+      document.getElementById('purchaseTable').addEventListener('paste', handleExcelPaste);
+      if (document.getElementById('masterPasteArea')) document.getElementById('masterPasteArea').addEventListener('paste', handleMasterPaste);
+      if (document.getElementById('stockPasteArea')) document.getElementById('stockPasteArea').addEventListener('paste', handleStockExcelPaste);
+      if (document.getElementById('excelFileInput')) document.getElementById('excelFileInput').addEventListener('change', handleExcelFileUpload);
+      
+      document.getElementById('qty').addEventListener('input', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+      document.getElementById('type').addEventListener('change', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+    };
+  </script>
+
+  <style>
+    :root {
+        --color-blue: #3498db; --color-blue-dark: #2980b9;
+        --color-purple: #9b59b6; --color-purple-dark: #8e44ad;
+        --color-red: #e74c3c; --color-red-dark: #c0392b;
+        --color-orange: #f39c12; --color-orange-dark: #d35400;
+        --color-green: #2ecc71; --color-green-dark: #27ae60;
+        --color-dark: #34495e; --color-dark-dark: #2c3e50;
+    }
+
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+    
+    .header-bar { display: flex; align-items: center; margin-bottom: 30px; }
+    .back-btn { display: none; background: #34495e; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.3s; margin-right: 20px; align-items: center; }
+    .back-btn:hover { background: #2c3e50; transform: translateY(-2px); }
+    h2.main-title { color: #2c3e50; margin: 0; font-weight: 700; flex-grow: 1; text-align: center; font-size: 1.8rem; }
+
+    .main-menu { 
+        display: flex; flex-direction: row; flex-wrap: nowrap; gap: 20px; 
+        max-width: 1200px; margin: 0 auto; overflow-x: auto; padding: 10px 10px 30px 10px;
+        scroll-snap-type: x mandatory;
+    }
+    .main-menu::-webkit-scrollbar { height: 10px; }
+    .main-menu::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 5px; }
+    .main-menu::-webkit-scrollbar-track { background: #f1f2f6; border-radius: 5px; }
+    
+    .menu-card { 
+        flex: 0 0 250px; scroll-snap-align: start;
+        border-radius: 12px; padding: 35px 20px; text-align: center; cursor: pointer; color: white;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.1); transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden;
+    }
+    .menu-card::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 100%); pointer-events: none; }
+    .menu-card:hover { transform: translateY(-8px); box-shadow: 0 15px 30px rgba(0,0,0,0.18); }
+    .menu-card i { font-size: 3.5rem; margin-bottom: 15px; font-style: normal; text-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .menu-card h3 { margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.4; border-bottom: none; padding-bottom: 0; color: #fff;}
+    .menu-card small { display: block; font-size: 0.85rem; opacity: 0.85; margin-top: 5px; font-weight: 400; }
+
+    .card-1 { background: linear-gradient(135deg, var(--color-blue), var(--color-blue-dark)); }
+    .card-2 { background: linear-gradient(135deg, var(--color-purple), var(--color-purple-dark)); }
+    .card-3 { background: linear-gradient(135deg, var(--color-red), var(--color-red-dark)); }
+    .card-master { background: linear-gradient(135deg, var(--color-orange), var(--color-orange-dark)); }
+    .card-4 { background: linear-gradient(135deg, var(--color-green), var(--color-green-dark)); }
+    .card-5 { background: linear-gradient(135deg, var(--color-dark), var(--color-dark-dark)); }
+
+    .view-section { display: none; max-width: 1200px; margin: 0 auto; animation: fadeIn 0.4s ease-in-out; }
+    .view-section.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .card { background: white; padding: 0 30px 30px 30px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.06); box-sizing: border-box; width: 100%; margin-bottom: 30px; overflow: hidden; }
+    
+    .card-header { 
+        margin: 0 -30px 25px -30px; padding: 20px 30px; border-bottom: none; 
+        background: linear-gradient(135deg, var(--theme-color-1), var(--theme-color-2));
+    }
+    .card-header h3 { margin: 0; padding: 0; color: white !important; font-size: 1.4rem; font-weight: 600; border: none; text-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    
+    h3:not(.card-header h3) { margin-top: 30px; color: #34495e; border-bottom: 2px solid #f1f2f6; padding-bottom: 12px; margin-bottom: 25px; font-weight: 600; }
+
+    div.input-group { margin-bottom: 15px; }
+    .input-row { display: flex; gap: 10px; }
+    .input-row .input-group { flex: 1; }
+    label { display: block; font-weight: 500; margin-bottom: 8px; color: #555; font-size: 0.95rem; }
+    input, select, textarea { width: 100%; padding: 10px; border: 1.5px solid #dcdde1; border-radius: 6px; box-sizing: border-box; font-family: inherit; }
+    input:focus, select:focus, textarea:focus { border-color: #4a90e2; outline: none; box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15); }
+    
+    button.btn-primary { padding: 12px 20px; background-color: #4a90e2; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; transition: 0.2s;}
+    button.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .action-btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; margin-right: 5px; color: white; transition: 0.2s;}
+    .edit-btn { background-color: #f39c12; } .edit-btn:hover { background-color: #d68910; }
+    .del-btn { background-color: #e74c3c; } .del-btn:hover { background-color: #c0392b; }
+    .save-btn { background-color: #27ae60; } .save-btn:hover { background-color: #229954; }
+    .cancel-btn { background-color: #95a5a6; } .cancel-btn:hover { background-color: #7f8c8d; }
+    .inline-edit { padding: 5px; width: 90%; border: 1px solid #4a90e2; border-radius: 4px; }
+
+    .filter-panel { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dcdde1; }
+    .search-box { flex: 1; min-width: 250px; margin-bottom: 0 !important; }
+    .date-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .date-controls label { margin-bottom: 0; }
+    .date-controls input[type="date"] { width: auto; }
+    .balance-display { margin-bottom: 20px; padding: 15px; background: #fdfad5; border-radius: 8px; border-left: 5px solid #f1c40f; }
+    .balance-display:empty { display: none; }
+
+    .table-container { width: 100%; overflow-x: auto; border: 1px solid #dcdde1; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; background: white; min-width: 600px; }
+    th { background: #f1f2f6; padding: 12px; text-align: left; font-size: 0.95rem; color: #2c3e50; border-bottom: 2px solid #dcdde1; white-space: nowrap; }
+    td { padding: 12px; border-bottom: 1px solid #f1f2f6; }
+    #purchaseTable { width: max-content; }
+    #purchaseTable td { padding: 4px; border-right: 1px solid #f1f2f6; }
+    #purchaseTable td input { width: 120px; border: none; padding: 8px; border-radius: 0; background: transparent; }
+    #purchaseTable td input:focus { background: #fdfad5; border-bottom: 2px solid #4a90e2; box-shadow: none; }
+    
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;}
+    .toolbar select { width: auto; padding: 8px; }
+    .toolbar button { width: auto; padding: 8px 15px; background-color: #27ae60; }
+    .excel-tip { font-size: 0.85rem; color: #27ae60; background: #eafaf1; padding: 12px; border-radius: 6px; margin: 15px 0; border: 1px dashed #27ae60; }
+    #masterPasteArea, #stockPasteArea { height: 40px; margin-bottom: 10px; border: 1px dashed #3498db; background: #ebf5fb; font-size: 0.9rem;}
+    .file-upload-box { border: 2px dashed #27ae60; background: #f4fbf7; padding: 15px; text-align: center; border-radius: 8px; margin-bottom: 15px; }
+    .file-upload-box input[type="file"] { display: none; }
+    .file-upload-label { background: #27ae60; color: white; padding: 8px 18px; border-radius: 5px; cursor: pointer; display: inline-block; font-weight: bold; transition: 0.2s; }
+    .file-upload-label:hover { background: #219150; }
+
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(4px); }
+    .modal-content { background: white; padding: 30px; border-radius: 16px; width: 320px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.2); animation: fadeIn 0.3s; }
+    .modal-content h3 { margin-top: 0; border: none; font-size: 1.4rem; color: #2c3e50; }
+    .modal-content input { margin-bottom: 15px; font-size: 1rem; padding: 12px; }
+    
+    .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; align-items: stretch; }
+    .grid-2-col > .card { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+
+  <div class="header-bar">
+      <button id="backBtn" class="back-btn" onclick="showMainMenu()">🔙 返回主選單</button>
+      <h2 class="main-title">📦 物資總管系統</h2>
+  </div>
+
+  <div id="mainMenu" class="main-menu view-section active">
+      <div class="menu-card card-1" onclick="showView('view-add')">
+          <i>📝</i><h3>新增出入庫紀錄</h3><small>(Add Stock Record)</small>
+      </div>
+      <div class="menu-card card-2" onclick="showView('view-query')">
+          <i>🔍</i><h3>庫存查詢與圖表</h3><small>各物品總出庫量統計 (Out)</small>
+      </div>
+      <div class="menu-card card-3" onclick="showView('view-expiry')">
+          <i>⏳</i><h3>過期日檢查</h3><small>(Expiry Check)</small>
+      </div>
+      <div class="menu-card card-master" onclick="showView('view-master')">
+          <i>📋</i><h3>物資總表</h3><small>(Master List)</small>
+      </div>
+      <div class="menu-card card-4" onclick="showView('view-purchase')">
+          <i>🛒</i><h3>年度買貨清單</h3><small>(Purchase List)</small>
+      </div>
+      <div class="menu-card card-5" onclick="openLoginModal()">
+          <i>⚙️</i><h3>管理員設定</h3><small>(Admin Settings)</small>
+      </div>
+  </div>
+
+  <div id="loginModal" class="modal-overlay">
+      <div class="modal-content">
+          <h3>🔒 身份驗證</h3>
+          <p style="color: #7f8c8d; font-size: 0.9rem; margin-bottom: 20px;">請輸入管理員帳號與密碼</p>
+          <input type="text" id="adminUser" placeholder="帳戶名稱 (Username)">
+          <input type="password" id="adminPwd" placeholder="密碼 (Password)" onkeydown="if(event.key==='Enter') verifyAdmin()">
+          <button class="btn-primary" onclick="verifyAdmin()">登入系統</button>
+          <button class="action-btn cancel-btn" style="width: 100%; margin-top: 10px; padding: 12px; border-radius: 6px;" onclick="closeLoginModal()">取消</button>
+      </div>
+  </div>
+
+  <div id="view-add" class="view-section">
+      <div class="card" style="max-width: 800px; margin: 0 auto;">
+        <div class="card-header" style="--theme-color-1: var(--color-blue); --theme-color-2: var(--color-blue-dark);">
+            <h3>📝 新增出入庫紀錄</h3>
+        </div>
+        <form id="stockForm">
+          <div class="input-row">
+              <div class="input-group">
+                <label>資料分類 (Category)</label>
+                <select id="addCategory">
+                    <option value="Drape">Drape</option>
+                    <option value="Consumable" selected>Consumable</option>
+                </select>
+              </div>
+              <div class="input-group"><label>日期</label><input type="date" id="date" required></div>
+          </div>
+          
+          <div class="input-group" style="position: relative;">
+            <label>物品 (Item)</label>
+            <input type="text" id="item" placeholder="請輸入 Code 或名稱，例如: P33A" oninput="showAddItemSuggestions(this.value)" autocomplete="off" required>
+            <div id="addItemSuggestionBox" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ccc; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0px 4px 8px rgba(0,0,0,0.15); border-radius: 0 0 6px 6px;"></div>
+            <div id="currentItemBalance" style="margin-top: 8px; color: #7f8c8d; font-size:0.95rem; background:#f1f2f6; padding:10px; border-radius:6px;"></div>
+          </div>
+
+          <div class="input-row">
+              <div class="input-group"><label>類型</label>
+                <select id="type">
+                  <option value="In">In (入庫)</option>
+                  <option value="Out">Out (出庫)</option>
+                  <option value="Opening Balance">Opening Balance (期初結餘)</option>
+                </select>
+              </div>
+              <div class="input-group"><label>數量</label><input type="number" id="qty" min="0" step="any" required></div>
+          </div>
+          
+          <div class="input-row" style="background:#f9f9f9; padding:15px; border-radius:8px; border:1px dashed #dcdde1; margin-bottom:15px;">
+              <div class="input-group" style="margin-bottom:0;"><label>Pack size</label>
+                <input list="packSizeOptions" id="packSize" placeholder="Box, pcs...">
+                <datalist id="packSizeOptions"><option value="Box"></option><option value="pcs"></option><option value="pk"></option></datalist>
+              </div>
+              <div class="input-group" style="margin-bottom:0;"><label>Lot No</label><input type="text" id="lotNo" placeholder="選填"></div>
+              <div class="input-group" style="margin-bottom:0;"><label>PO</label><input type="text" id="poNo" placeholder="選填"></div>
+              <div class="input-group" style="margin-bottom:0;"><label>Expiry Day</label><input type="date" id="expiryDate"></div>
+          </div>
+          
+          <div class="input-group"><label>備註 (Remarks)</label><input type="text" id="remarks" placeholder="例如: 過期、損毀..."></div>
+          <button type="submit" id="submitBtn" class="btn-primary" style="font-size: 1.1rem; padding: 15px; background:var(--color-blue);">📥 提交紀錄</button>
+        </form>
+      </div>
+  </div>
+
+  <div id="view-query" class="view-section">
+      <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+          <button id="btn-cat-drape" class="action-btn" style="flex:1; padding: 15px; font-size: 1.2rem; background: #34495e; color: white; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="setQueryCategory('Drape')">📦 Drape 數據</button>
+          <button id="btn-cat-consumable" class="action-btn" style="flex:1; padding: 15px; font-size: 1.2rem; background: #bdc3c7; color: #2c3e50; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="setQueryCategory('Consumable')">📦 Consumable 數據</button>
+      </div>
+
+      <div class="card" style="margin-bottom: 25px;">
+        <div class="card-header" style="--theme-color-1: var(--color-purple); --theme-color-2: var(--color-purple-dark);">
+            <h3>📊 庫存查詢與出庫量統計</h3>
+        </div>
+        
+        <div class="filter-panel" style="margin-top:20px;">
+          <div style="position: relative; flex: 1; min-width: 250px;">
+            <input type="text" id="searchItem" class="search-box" placeholder="輸入 Cat no / Description / Name 查詢餘額..." oninput="showSuggestions(this.value); filterHistory(false);" autocomplete="off">
+            <div id="suggestionBox" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ccc; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0px 4px 8px rgba(0,0,0,0.15); border-radius: 0 0 6px 6px;"></div>
+          </div>
+          
+          <div class="date-controls">
+            <label>由：</label><input type="date" id="startDate" onchange="filterHistory()">
+            <label>至：</label><input type="date" id="endDate" onchange="filterHistory()">
+            <span id="yearButtonsContainer"></span>
+            <button class="action-btn cancel-btn" style="padding: 8px 12px;" onclick="clearDateRange()">清除</button>
+          </div>
+          
+          <div style="display: flex; gap:10px; width:100%; justify-content: flex-end; margin-top: 5px;">
+             <button class="btn-primary" style="width: auto; background: var(--color-green); font-size: 0.9rem;" onclick="exportQueryExcel()">📥 匯出當前數據 (Excel)</button>
+             <button class="btn-primary" style="width: auto; background: var(--color-purple-dark); font-size: 0.9rem;" onclick="exportQueryChart()">🖼️ 下載實時圖表</button>
+          </div>
+        </div>
+        
+        <!-- 新增: 圖表資料切換按鈕，包含按月與財政年度顯示的 Toggle -->
+        <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 15px;">
+            <button id="btn-chart-in" class="action-btn" style="background:#bdc3c7; color:#2c3e50; font-weight:bold; padding:8px 15px;" onclick="setChartMode('In')">📈 僅顯示 In</button>
+            <button id="btn-chart-out" class="action-btn" style="background:#bdc3c7; color:#2c3e50; font-weight:bold; padding:8px 15px;" onclick="setChartMode('Out')">📉 僅顯示 Out</button>
+            <button id="btn-chart-both" class="action-btn" style="background:#34495e; color:white; font-weight:bold; padding:8px 15px;" onclick="setChartMode('Both')">📊 顯示 In & Out</button>
+            
+            <div style="border-left: 2px solid #ccc; margin: 0 5px;"></div>
+            
+            <button id="btn-group-month" class="action-btn" style="background:#34495e; color:white; font-weight:bold; padding:8px 15px;" onclick="setChartGroupBy('Month')">📅 按月顯示</button>
+            <button id="btn-group-fy" class="action-btn" style="background:#bdc3c7; color:#2c3e50; font-weight:bold; padding:8px 15px;" onclick="setChartGroupBy('FY')">📆 按財政年度</button>
+        </div>
+
+        <div style="height: 350px; position: relative; margin-bottom: 30px;">
+            <canvas id="usageChart"></canvas>
+        </div>
+
+        <div id="balanceDisplay" class="balance-display"></div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                  <th>日期</th><th>Cat no</th><th>Description</th><th>HA Item Code</th><th>Status</th><th>數量</th><th>包裝 / 批號 / PO / 過期日</th><th>結餘 (Balance)</th><th>備註 (Remarks)</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="historyTbody"></tbody>
+          </table>
+        </div>
+      </div>
+  </div>
+
+  <div id="view-expiry" class="view-section">
+      <div class="card">
+        <div class="card-header" style="--theme-color-1: var(--color-red); --theme-color-2: var(--color-red-dark);">
+            <h3>⏳ 過期日檢查與管理 (Expiry Check)</h3>
+        </div>
+        <div class="excel-tip">💡 這裡會自動彙整所有包含 **Expiry Day (過期日)** 的資料，如果物品 3 個月內過期會顯示 <span style="color:#d35400; font-weight:bold;">橙色警報</span>，如果 2 個月內或已過期則顯示 <span style="color:#c0392b; font-weight:bold;">紅色警報</span>。</div>
+        <div class="toolbar" style="justify-content: space-between;">
+          <div style="flex: 1; min-width: 250px; margin-right: 15px;">
+            <input type="text" id="searchExpiry" class="search-box" placeholder="輸入 Cat no / Description / Code 查詢..." oninput="renderExpiryTable()" style="margin-bottom:0;">
+          </div>
+          <button class="btn-primary" style="background:#27ae60; width:auto;" onclick="exportExpiryExcel()">📥 一鍵匯出 Excel (.csv)</button>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+                <tr>
+                    <th>過期日 (Expiry Date) ⬇️</th><th>Cat no</th><th>Description</th><th>HA Item Code</th><th>Lot No</th><th>PO No</th><th>數量</th><th>類型</th><th>紀錄建立日期</th>
+                </tr>
+            </thead>
+            <tbody id="expiryTbody"></tbody>
+          </table>
+        </div>
+      </div>
+  </div>
+
+  <div id="view-master" class="view-section">
+      <div class="card">
+        <div class="card-header" style="--theme-color-1: var(--color-orange); --theme-color-2: var(--color-orange-dark);">
+            <h3>📋 系統物資總表 (Master List)</h3>
+        </div>
+        
+        <div style="background:#f8f9fa; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #dcdde1; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+            <h4 style="margin-top:0; color:#2c3e50;">➕ 手持新增全新物品至總表</h4>
+            <div class="input-row">
+                <input type="text" id="newMasterCatNo" placeholder="Cat no (必填)">
+                <input type="text" id="newMasterDesc" placeholder="Description (必填)">
+                <input type="text" id="newMasterHaCode" placeholder="HA Item Code">
+                <input type="text" id="newMasterUom" placeholder="UOM (e.g. Box)">
+                <button class="btn-primary" style="width: auto; background: var(--color-orange);" onclick="addNewMasterItem()">新增</button>
+            </div>
+        </div>
+
+<div style="background:#e8f4f8; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bce0fd; display: flex; gap: 15px; align-items: center;">
+            <span style="font-weight: bold; color: #2980b9;">✅ 批次歸類所選物品：</span>
+            <button class="btn-primary" style="width: auto; background: #34495e;" onclick="batchUpdateCategory('Drape')">📦 歸類為 Drape</button>
+            <button class="btn-primary" style="width: auto; background: #bdc3c7; color: #2c3e50;" onclick="batchUpdateCategory('Consumable')">📦 歸類為 Consumable</button>
+        </div>
+        <div class="excel-tip">💡 這裡是系統內所有已被登錄或建立過交易紀錄的 Item 清單。未登錄於總表但有紀錄的物品會提供「加入總表」按鈕。</div>
+<div class="toolbar" style="justify-content: space-between;">
+          <div style="flex: 1; min-width: 250px; margin-right: 15px;">
+            <input type="text" id="searchMaster" class="search-box" placeholder="輸入 Cat no / Description / Code 查詢..." oninput="renderMasterList()" style="margin-bottom:0;">
+          </div>
+          <button class="btn-primary" style="background:var(--color-orange); width:auto;" onclick="exportMasterExcel()">📥 一鍵匯出總表 (Excel)</button>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+                <tr>
+                    <th>Category</th><th>Cat no</th><th>Description</th><th>HA Item Code</th><th>UOM</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="masterTbody"></tbody>
+          </table>
+        </div>
+      </div>
+  </div>
+
+  <div id="view-purchase" class="view-section">
+      <div class="card">
+        <div class="card-header" style="--theme-color-1: var(--color-green); --theme-color-2: var(--color-green-dark);">
+            <h3>🛒 年度買貨清單管理 (Purchase List)</h3>
+        </div>
+        <div class="excel-tip">💡 可以在對應年度的 Excel 中複製多行資料，並點擊下方表格內直接貼上 (Ctrl+V) 進行批量匯入。</div>
+        <div class="toolbar">
+<div style="margin-bottom: 15px; display: flex; gap: 10px;">
+    <button class="action-btn" style="background:#34495e; color:white; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Drape')">📦 將勾選項歸類為 Drape</button>
+    <button class="action-btn" style="background:#bdc3c7; color:#2c3e50; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Consumable')">🩹 將勾選項歸類為 Consumable</button>
+</div>
+          <div>
+            <label style="display:inline-block; margin-right:10px;">選擇年度：</label>
+            <select id="purchaseYear" onchange="loadPurchaseList()" style="width: auto; display: inline-block;">
+                <option value="2024-2025">2024-2025</option>
+                <option value="2025-2026">2025-2026</option>
+                <option value="2026-2027" selected>2026-2027</option>
+                <option value="2027-2028">2027-2028</option>
+                <option value="2028-2029">2028-2029</option>
+            </select>
+          </div>
+          <button class="btn-primary" style="width: auto; background: var(--color-green-dark);" onclick="addPurchaseRow()">+ 新增空白列 (Add Row)</button>
+        </div>
+        <div class="table-container">
+          <table id="purchaseTable">
+            <thead><tr id="purchaseTheadTr"></tr></thead>
+            <tbody id="purchaseTbody"></tbody>
+          </table>
+        </div>
+      </div>
+  </div>
+
+  <div id="view-admin" class="view-section">
+      <div class="grid-2-col">
+          <div style="display: flex; flex-direction: column; gap: 25px;">
+              <div class="card">
+                  <div class="card-header" style="--theme-color-1: var(--color-dark); --theme-color-2: var(--color-dark-dark);">
+                      <h3>📥 智能 Excel 對帳與批量匯入 (Stock Take)</h3>
+                  </div>
+                  <div class="excel-tip">💡 請選擇你要匯入的 Excel 屬於哪個資料庫與年度。系統將以 Excel 上的結餘為準自動對帳。</div>
+                  
+                  <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                      <button id="import-btn-drape" class="action-btn" style="flex:1; padding: 12px; font-size: 1.1rem; background: #34495e; color: white; border-radius: 6px; font-weight: bold;" onclick="setImportCategory('Drape')">📦 匯入至 Drape</button>
+                      <button id="import-btn-consumable" class="action-btn" style="flex:1; padding: 12px; font-size: 1.1rem; background: #bdc3c7; color: #2c3e50; border-radius: 6px; font-weight: bold;" onclick="setImportCategory('Consumable')">📦 匯入至 Consumable</button>
+                  </div>
+                  <input type="hidden" id="selectedImportCategory" value="Consumable">
+
+                  <select id="importYearSelect" style="width: 100%; padding: 10px; font-weight: bold; font-size: 1rem; border-color: #27ae60; margin-bottom: 15px;">
+<option value="2022">2022 年度</option>
+            <option value="2023">2023-24 年度</option>
+            <option value="2024">2024-25 年度</option>
+            <option value="2025">2025-26 年度</option>
+            <option value="2026">2026-27 年度</option>
+            <option value="2027">2027-28 年度</option>
+            <option value="2028">2028-29 年度</option>
+            <option value="2029">2029-30 年度</option>
+            <option value="2030">2030-31 年度</option>
+            <option value="2031">2031-32 年度</option>
+            <option value="2032">2032-33 年度</option>
+            <option value="2033">2033-34 年度</option>
+            <option value="2034">2034-35 年度</option>
+            <option value="2035">2035-36 年度</option>
+                  </select>
+
+                  <div class="file-upload-box">
+                      <p style="margin: 0 0 10px 0; color: #555;">📁 選擇你的 Excel 檔案上傳 (.xlsx, .xls)</p>
+                      <label for="excelFileInput" class="file-upload-label">點擊這裡選擇檔案</label>
+                      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv">
+                  </div>
+                  <div style="text-align:center; font-weight:bold; margin-bottom:10px;">或直接貼上 (Ctrl+V) Excel 資料</div>
+                  <textarea id="stockPasteArea" placeholder="點擊這裡並按下 Ctrl+V 貼上..."></textarea>
+              </div>
+          </div>
+          
+          <div style="display: flex; flex-direction: column; gap: 25px;">
+              <div class="card">
+                  <div class="card-header" style="--theme-color-1: var(--color-orange); --theme-color-2: var(--color-orange-dark);">
+                      <h3>📋 系統物資總表 (Master List) 批量匯入</h3>
+                  </div>
+                  <div class="excel-tip">💡 請複製包含 Code, Desc, Cat No 的資料並貼上。</div>
+                  <textarea id="masterPasteArea" placeholder="點擊這裡並按下 Ctrl+V 貼上..."></textarea>
+              </div>
+
+              <div class="card">
+                  <div class="card-header" style="--theme-color-1: var(--color-red); --theme-color-2: var(--color-red-dark);">
+                      <h3>⚠️ 危險操作區 (Danger Zone)</h3>
+                  </div>
+                  <div style="display:flex; flex-direction: column; gap: 10px;">
+                      <button class="action-btn del-btn" style="padding: 12px; font-size:1rem;" onclick="cleanGarbageData()">🧹 清除物品名為 7, 8, 9 的異常數據</button>
+                      <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#d35400;" onclick="cleanDuplicates()">🗑️ 掃描並刪除重覆的相同數據</button>
+                      <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#c0392b;" onclick="deleteAllData()">🚨 清空系統內所有的庫存紀錄</button>
+<button class="btn-primary" style="background-color: #e67e22; margin-bottom: 15px;" onclick="fixSystemBalances()">
+    🛠️ 修正系統結餘運算問題 (重新校準 IN/OUT 結餘)
+</button>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+
+</body>
+</html>  
