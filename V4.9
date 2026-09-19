@@ -409,9 +409,9 @@ let targetKey = getItemBalanceKey({ item: itemName, category: category });
       } catch (error) { console.error(error); alert("寫入失敗"); submitBtn.disabled = false; submitBtn.innerText = "提交紀錄"; }
     });
 
-function isDuplicateTx(date, itemObj, type) {
-      // 移除對 qty 與 sysAdjust 的強制比對，只要該月份該物品已有 In/Out/Opening，即視為重覆 (解決結餘重覆問題)
-      return transactionsData.some(t => 
+function findDuplicateTx(date, itemObj, type) {
+      // 改為尋找該筆紀錄，以便後續可以覆蓋更新，解決「只有一條數正確/結餘出入」問題
+      return transactionsData.find(t => 
         t.date === date && t.type === type && 
         (t.category || 'Consumable') === (itemObj.category || 'Consumable') && isSameItem(t, itemObj)
       );
@@ -690,52 +690,92 @@ let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = no
       if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
       let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
 
-if (openBalVal !== null) {
-          if (!isDuplicateTx(openDate, itemObj, "Opening Balance")) {
-              let newTx = { 
+// 處理 Opening Balance：若發現重覆就執行更新 (Update) 來取代錯誤的舊數，而非單純跳過
+      if (openBalVal !== null) {
+          let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
+          if (existingOpen) {
+              if (existingOpen.qty !== openBalVal) await updateDoc(doc(db, "transactions", existingOpen.id), { qty: openBalVal });
+          } else {
+              await addDoc(collection(db, "transactions"), { 
                   category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
                   type: "Opening Balance", qty: openBalVal, remarks: "年度期初結餘(Excel)", timestamp: new Date(openDate + "T09:00:00") 
-              };
-              await addDoc(collection(db, "transactions"), newTx);
-              transactionsData.push(newTx); // 即時寫入快取，徹底防止重複
+              });
               importCount++;
           }
       } else if (itemTxs.length === 0) {
-          if (!isDuplicateTx(openDate, itemObj, "Opening Balance")) {
-              let newTx = { 
-                category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                type: "Opening Balance", qty: 0, remarks: "年度期初結餘(預設)", timestamp: new Date(openDate + "T09:00:00") 
-              };
-              await addDoc(collection(db, "transactions"), newTx);
-              transactionsData.push(newTx); 
+          let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
+          if (!existingOpen) {
+              await addDoc(collection(db, "transactions"), { 
+                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
+                  type: "Opening Balance", qty: 0, remarks: "年度期初結餘(預設)", timestamp: new Date(openDate + "T09:00:00") 
+              });
               importCount++;
           }
       }
 
-for (let m = 0; m < monthBlocks.length; m++) {
-            let rawIn = cells[monthBlocks[m].in];
-            let rawOut = cells[monthBlocks[m].out];
-            let rawBal = cells[monthBlocks[m].bal];
+      let pendingAdjust = 0; // 用於隱藏記錄被跳過月份的結餘誤差
 
-            let mIn = parseFloat(String(rawIn || 0).replace(/,/g, '')) || 0;
-            let mOut = parseFloat(String(rawOut || 0).replace(/,/g, '')) || 0;
-            
-            let mBal = currentBal; // 預設使用上個月結餘
-            
-            // 必須跟足 Excel 的 balance
-            if (rawBal !== undefined && rawBal !== null && String(rawBal).trim() !== "") {
-                let parsedBal = parseFloat(String(rawBal).replace(/,/g, ''));
-                if (!isNaN(parsedBal)) mBal = parsedBal;
-            }
+      for (let m = 0; m < monthBlocks.length; m++) {
+          let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
+          let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
+          
+          let expectedBal = currentBal + mIn - mOut;
+          let mBal = expectedBal; 
+          
+          let mBalStr = cells[monthBlocks[m].bal];
+          if (mBalStr !== undefined && mBalStr !== null && String(mBalStr).trim() !== "") {
+              let parsedBal = parseFloat(String(mBalStr).replace(/,/g, ''));
+              if (!isNaN(parsedBal)) mBal = parsedBal;
+          }
 
-            // 【新邏輯】如果該月的 IN/Out 位置是空白或 0，請直接跳過，不產生隱藏調整數
-            let inIsEmpty = (rawIn === undefined || rawIn === null || String(rawIn).trim() === "");
-            let outIsEmpty = (rawOut === undefined || rawOut === null || String(rawOut).trim() === "");
-            
-            if ((inIsEmpty && outIsEmpty) || (mIn === 0 && mOut === 0)) {
-                currentBal = mBal; // 仍需更新結餘為當前月的結餘，供下個月計算
-                continue; 
-            }
+          // 核心修正：如果該月的IN/out的位置是空白或0, 請直接跳過！(不寫入紀錄)
+          if (mIn === 0 && mOut === 0) {
+              if (mBal !== expectedBal) pendingAdjust += (mBal - expectedBal); // 儲存結餘誤差以便未來附加上去
+              currentBal = mBal; // 強制跟足 Excel balance
+              continue; 
+          }
+
+          // 當有 IN 或 OUT 時，把之前隱藏跳過的結餘誤差，附加到本次寫入的系統調整中
+          let totalSysAdjust = pendingAdjust + (mBal - expectedBal);
+          pendingAdjust = 0; // 誤差已附加，清零
+
+          let monthNum = m + 4; let calcYear = selectedYear;
+          if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
+          let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
+
+          if (mIn > 0) {
+              let adj = totalSysAdjust; totalSysAdjust = 0; // 全數附加在 In 上
+              let remarksIn = adj > 0 ? "系統調整 (數量增加)" : (adj < 0 ? "系統調整 (數量短缺)" : "");
+              let existingTx = findDuplicateTx(importDate, itemObj, "In");
+              
+              if (existingTx) {
+                  await updateDoc(doc(db, "transactions", existingTx.id), { qty: mIn, sysAdjust: adj, remarks: remarksIn });
+              } else {
+                  await addDoc(collection(db, "transactions"), { 
+                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
+                      type: "In", qty: mIn, sysAdjust: adj, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00") 
+                  });
+                  importCount++;
+              }
+          }
+
+          if (mOut > 0) {
+              let adj = totalSysAdjust; totalSysAdjust = 0; // 若上方 mIn 沒消耗掉，則附加在 Out
+              let remarksOut = adj > 0 ? "系統調整 (數量增加)" : (adj < 0 ? "系統調整 (數量短缺/掉棄)" : "");
+              let existingTx = findDuplicateTx(importDate, itemObj, "Out");
+              
+              if (existingTx) {
+                  await updateDoc(doc(db, "transactions", existingTx.id), { qty: mOut, sysAdjust: adj, remarks: remarksOut });
+              } else {
+                  await addDoc(collection(db, "transactions"), { 
+                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
+                      type: "Out", qty: mOut, sysAdjust: adj, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00") 
+                  });
+                  importCount++;
+              }
+          }
+          currentBal = mBal; // 強制結餘跟足 Excel 的 balance
+      }
 
             let expectedBal = currentBal + mIn - mOut;
             let sysAdjust = 0; let remarksOut = ""; let remarksIn = "";
