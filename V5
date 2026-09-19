@@ -409,9 +409,9 @@ let targetKey = getItemBalanceKey({ item: itemName, category: category });
       } catch (error) { console.error(error); alert("寫入失敗"); submitBtn.disabled = false; submitBtn.innerText = "提交紀錄"; }
     });
 
-function findDuplicateTx(date, itemObj, type) {
-      // 改為尋找該筆紀錄，以便後續可以覆蓋更新，解決「只有一條數正確/結餘出入」問題
-      return transactionsData.find(t => 
+function isDuplicateTx(date, itemObj, type) {
+      // 移除對 qty 與 sysAdjust 的強制比對，只要該月份該物品已有 In/Out/Opening，即視為重覆 (解決結餘重覆問題)
+      return transactionsData.some(t => 
         t.date === date && t.type === type && 
         (t.category || 'Consumable') === (itemObj.category || 'Consumable') && isSameItem(t, itemObj)
       );
@@ -524,6 +524,7 @@ window.fixSystemBalances = async function() {
       if (match) return parseInt(match[1]); return null;
     }
 
+// 通用處理 Stock Take Excel 數據矩陣 (融合 upload.txt 對齊演算法與 index_12.html 分類匹配)
     async function processStockMatrix(matrixRows, fileName = "") {
       let detectedYear = autoDetectYearFromFileName(fileName);
       if (detectedYear) document.getElementById('importYearSelect').value = detectedYear.toString();
@@ -534,233 +535,204 @@ window.fixSystemBalances = async function() {
 
       const loadingDiv = document.createElement('div');
       loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#27ae60; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold; box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-      loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; document.body.appendChild(loadingDiv);
+      loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; 
+      document.body.appendChild(loadingDiv);
 
       try {
-let idxDesc = -1, idxCat = -1, idxCssd = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
-    for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
-        let row = matrixRows[r] || [];
-        for (let c = 0; c < row.length; c++) {
-            // 清除所有符號與空格，只比對英文字母，達到「所有大小寫和空白與符號皆適用」
-            let cellVal = String(row[c] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (cellVal === 'itemdescription' || cellVal === 'description' || cellVal === 'desc') idxDesc = c;
-            else if (cellVal === 'catno' || cellVal === 'cat' || cellVal === 'category') idxCat = c;
-            else if (cellVal === 'cssdcode' || cellVal === 'cssdno' || cellVal === 'cssd') idxCssd = c;
-            else if (cellVal === 'haitemcode' || cellVal === 'haitemno' || cellVal === 'hacode' || cellVal === 'haitem') idxHaCode = c;
-            else if (cellVal === 'uombox' || cellVal === 'uom') { if (idxUom === -1 || cellVal.includes('box')) idxUom = c; }
-            else if (cellVal === 'openingbalance' || cellVal === 'openbal' || cellVal === 'openingbal' || cellVal === 'openbalance') idxOpenBal = c;
-        }
-    }
-
-    let monthBlocks = []; let headerRowIndex = 0;
-    for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
-        let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')) : []; let tempBlocks = [];
-        for (let i = 0; i < row.length - 2; i++) { 
-            let c1 = row[i], c2 = row[i+1], c3 = row[i+2];
-            if (c1.startsWith('in') && c2.startsWith('out') && c3.startsWith('bal')) { 
-                tempBlocks.push({ in: i, out: i+1, bal: i+2 }); 
-            } 
-        }
-        if (tempBlocks.length >= 12) { monthBlocks = tempBlocks.slice(-12); headerRowIndex = r; break;
-        } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { monthBlocks = tempBlocks; headerRowIndex = r; }
-    }
-
-    if (idxOpenBal === -1 && monthBlocks.length > 0) {
-        let firstInCol = monthBlocks[0].in;
-        for (let c = 0; c < firstInCol; c++) {
-            if (c !== idxCat && c !== idxDesc && c !== idxHaCode && c !== idxCssd && c !== idxUom) {
-                idxOpenBal = c;
-                break;
+        let idxDesc = -1, idxCat = -1, idxHaCode = -1, idxOpenBal = -1;
+        
+        // 1. 掃描前 10 行尋找 Metadata 的確切欄位
+        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+            let row = matrixRows[r] || [];
+            for (let c = 0; c < row.length; c++) {
+                // 清除所有符號與空白，只比對英文字母與數字 (完美涵蓋所有大小寫和符號)
+                let cellVal = String(row[c] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (cellVal === 'itemdescription' || cellVal === 'description') idxDesc = c;
+                else if (cellVal === 'catno') idxCat = c;
+                else if (cellVal === 'cssdcode' || cellVal === 'haitemcode') idxHaCode = c;
+                else if (cellVal === 'openingbalance' || cellVal === 'openbal') idxOpenBal = c;
             }
         }
-    }
 
-    let importCount = 0;
-    for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
-      let cells = matrixRows[r]; if (!cells || cells.length < 3) continue;
+        // 2. 找出 12 個月份的 In/Out/Balance 欄位群組
+        let monthBlocks = []; let headerRowIndex = 0;
+        for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
+            let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')) : []; 
+            let tempBlocks = [];
+            for (let i = 0; i < row.length - 2; i++) { 
+                let c1 = row[i], c2 = row[i+1], c3 = row[i+2];
+                // 涵蓋 Bal 或 Balance
+                if (c1 === 'in' && c2 === 'out' && (c3 === 'bal' || c3 === 'balance')) { 
+                    tempBlocks.push({ in: i, out: i+1, bal: i+2 }); 
+                } 
+            }
+            if (tempBlocks.length >= 12) { 
+                monthBlocks = tempBlocks.slice(-12); 
+                headerRowIndex = r; 
+                break;
+            } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { 
+                monthBlocks = tempBlocks; 
+                headerRowIndex = r; 
+            }
+        }
 
-      let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
-      let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
-      let cssd = idxCssd !== -1 && cells[idxCssd] !== undefined ? String(cells[idxCssd]).trim() : "";
-      let uom = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
-      let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
-      if ((!haCode || haCode === "NA" || haCode === "") && cssd) haCode = cssd;
-      if (!haCode || haCode.trim() === "") haCode = "NA";
+        let importCount = 0;
+        for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
+          let cells = matrixRows[r]; 
+          if (!cells || cells.length < 3) continue;
 
-      if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
+          let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
+          let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
+          let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+          
+          if (!haCode || haCode.trim() === "") haCode = "NA";
+          if (!catNo && !desc && haCode === "NA") continue;
 
-let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
-      let foundExisting = false;
-      let fuzzyMatchedMaster = null; 
-      
-      const checkMatch = (mHa, mCat, mDesc) => {
-          let matchCount = 0;
-          if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2;
-          if (nCat && mCat === nCat) matchCount += 1;
-          if (nDesc && mDesc === nDesc) matchCount += 1;
-          return matchCount >= 2;
-      };
-
-      for (let m of masterItemsData) {
-          let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
-          if (checkMatch(mHa, mCat, mDesc)) {
-              haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
-              foundExisting = true; break;
-          } else if (!foundExisting) {
-              // 檢查 8 成相似度 (Cat No + Description 結合比對)
-              let sim = getSimilarity(String(catNo) + String(desc), String(m.catNo || "") + String(m.desc || ""));
-              if (sim >= 0.8 && sim < 1.0) { fuzzyMatchedMaster = m; }
+          // ===== 讀取期初結餘 (Opening Balance) =====
+          let currentBal = 0;
+          if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
+              let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim();
+              if (!isNaN(parseFloat(oVal))) currentBal = parseFloat(oVal);
           }
-      }
 
-      // 如果找不到完全符合的，但找到 8 成相似的，彈出視窗讓用戶選擇
-      if (!foundExisting && fuzzyMatchedMaster) {
-          let isSame = await window.askSimilarityMatch(desc, catNo, fuzzyMatchedMaster.desc, fuzzyMatchedMaster.catNo);
-          if (isSame) {
-              haCode = fuzzyMatchedMaster.code !== 'NA' && fuzzyMatchedMaster.code !== "" ? fuzzyMatchedMaster.code : haCode; 
-              catNo = fuzzyMatchedMaster.catNo || catNo; desc = fuzzyMatchedMaster.desc || desc;
-              foundExisting = true;
-          }
-      }
+          // ===== 智能比對與重覆 item 提示功能 (保留 index_12 原本邏輯) =====
+          let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
+          let foundExisting = false;
+          let fuzzyMatchedMaster = null; 
+          
+          const checkMatch = (mHa, mCat, mDesc) => {
+              let matchCount = 0;
+              if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2;
+              if (nCat && mCat === nCat) matchCount += 1;
+              if (nDesc && mDesc === nDesc) matchCount += 1;
+              return matchCount >= 2;
+          };
 
-      if (!foundExisting) {
-          for (let t of transactionsData) {
-              let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
-              if (checkMatch(tHa, tCat, tDesc)) {
-                  haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
+          for (let m of masterItemsData) {
+              let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
+              if (checkMatch(mHa, mCat, mDesc)) {
+                  haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
                   foundExisting = true; break;
+              } else if (!foundExisting) {
+                  let sim = getSimilarity(String(catNo) + String(desc), String(m.catNo || "") + String(m.desc || ""));
+                  if (sim >= 0.8 && sim < 1.0) { fuzzyMatchedMaster = m; }
               }
           }
-      }
-      if (!foundExisting) {
-          try {
-              await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
-              masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom, category: selectedCategory });
-          } catch(e) {}
-      }
 
-      let openBalVal = null;
-      if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
-          let rawStr = String(cells[idxOpenBal]).replace(/,/g, '').trim();
-          if (rawStr !== "" && !isNaN(parseFloat(rawStr))) {
-              openBalVal = parseFloat(rawStr);
+          if (!foundExisting && fuzzyMatchedMaster) {
+              let isSame = await window.askSimilarityMatch(desc, catNo, fuzzyMatchedMaster.desc, fuzzyMatchedMaster.catNo);
+              if (isSame) {
+                  haCode = fuzzyMatchedMaster.code !== 'NA' && fuzzyMatchedMaster.code !== "" ? fuzzyMatchedMaster.code : haCode; 
+                  catNo = fuzzyMatchedMaster.catNo || catNo; desc = fuzzyMatchedMaster.desc || desc;
+                  foundExisting = true;
+              }
           }
-      }
 
-      let itemKey = (haCode && haCode !== "NA") ? normalizeCode(haCode) : `${normalizeCode(catNo)}|${normalizeCode(desc)}`;
-      let simulatedBal = 0;
-      let itemTxs = transactionsData.filter(t => {
-          let tk = (t.haCode && t.haCode !== "NA") ? normalizeCode(t.haCode) : `${normalizeCode(t.catNo)}|${normalizeCode(t.desc)}`;
-          return tk === itemKey && (t.category || 'Consumable') === selectedCategory;
-      });
-      itemTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
-      let openDate = `${selectedYear}-04-01`;
-
-      itemTxs.forEach(t => {
-          if (t.date < openDate) {
-              let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0;
-              if (t.type === "Opening Balance") simulatedBal = q;
-              else if (t.type === "In") simulatedBal += (q + adj);
-              else if (t.type === "Out") { simulatedBal -= q; simulatedBal += adj; }
+          if (!foundExisting) {
+              for (let t of transactionsData) {
+                  let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
+                  if (checkMatch(tHa, tCat, tDesc)) {
+                      haCode = t.haCode !== 'NA' && t.haCode !== "" ? t.haCode : haCode; 
+                      catNo = t.catNo || catNo; 
+                      desc = t.desc || desc;
+                      foundExisting = true;
+                      break;
+                  }
+              }
           }
-      });
+          // ==============================================================
 
-      let currentBal = (openBalVal !== null) ? openBalVal : simulatedBal;
-      
-      let finalItemName = (haCode && haCode !== "NA") ? haCode : [catNo, desc].filter(Boolean).join(" | ");
-      if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
-      let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
+          let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
+          if (!finalItemName) finalItemName = catNo || desc || haCode;
+          let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
 
-// 處理 Opening Balance：若發現重覆就執行更新 (Update) 來取代錯誤的舊數，而非單純跳過
-      if (openBalVal !== null) {
+          // 寫入期初結餘 (Opening Balance)
+          let openDate = `${selectedYear}-04-01`; 
           let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
-          if (existingOpen) {
-              if (existingOpen.qty !== openBalVal) await updateDoc(doc(db, "transactions", existingOpen.id), { qty: openBalVal });
-          } else {
-              await addDoc(collection(db, "transactions"), { 
-                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                  type: "Opening Balance", qty: openBalVal, remarks: "年度期初結餘(Excel)", timestamp: new Date(openDate + "T09:00:00") 
+          if (!existingOpen && currentBal > 0) {
+             await addDoc(collection(db, "transactions"), {
+                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                  type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00")
               });
-              importCount++;
-          }
-      } else if (itemTxs.length === 0) {
-          let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
-          if (!existingOpen) {
-              await addDoc(collection(db, "transactions"), { 
-                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                  type: "Opening Balance", qty: 0, remarks: "年度期初結餘(預設)", timestamp: new Date(openDate + "T09:00:00") 
-              });
-              importCount++;
-          }
-      }
-
-      let pendingAdjust = 0; // 用於隱藏記錄被跳過月份的結餘誤差
-
-      for (let m = 0; m < monthBlocks.length; m++) {
-          let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
-          let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
-          
-          let expectedBal = currentBal + mIn - mOut;
-          let mBal = expectedBal; 
-          
-          let mBalStr = cells[monthBlocks[m].bal];
-          if (mBalStr !== undefined && mBalStr !== null && String(mBalStr).trim() !== "") {
-              let parsedBal = parseFloat(String(mBalStr).replace(/,/g, ''));
-              if (!isNaN(parsedBal)) mBal = parsedBal;
+             importCount++;
+          } else if (existingOpen && existingOpen.qty !== currentBal) {
+             await updateDoc(doc(db, "transactions", existingOpen.id), { qty: currentBal });
+             importCount++;
           }
 
-          // 核心修正：如果該月的IN/out的位置是空白或0, 請直接跳過！(不寫入紀錄)
-          if (mIn === 0 && mOut === 0) {
-              if (mBal !== expectedBal) pendingAdjust += (mBal - expectedBal); // 儲存結餘誤差以便未來附加上去
-              currentBal = mBal; // 強制跟足 Excel balance
-              continue; 
+          // ===== 循序處理 12 個月份 (套用 upload.txt 強制對齊最終結餘演算法) =====
+          for (let m = 0; m < monthBlocks.length; m++) {
+            let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
+            let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
+            let mBalStr = cells[monthBlocks[m].bal];
+            
+            if (mBalStr === undefined || mBalStr === null || String(mBalStr).trim() === "") continue;
+            let mBal = parseFloat(String(mBalStr).replace(/,/g, ''));
+            if (isNaN(mBal)) continue;
+
+            let expectedBal = currentBal + mIn - mOut;
+            let remarksOut = "";
+            let remarksIn = "";
+            
+            // 核心修正：強制對齊 Excel 最終結餘數值，若有差距自動生出補償 Out/In
+            if (expectedBal > mBal) {
+                let diff = expectedBal - mBal;
+                mOut += diff; // 數量短缺，強制作出庫 (掉棄)
+                remarksOut = "系統調整 (數量短缺/過期掉棄)";
+            } else if (expectedBal < mBal) {
+                let diff = mBal - expectedBal;
+                mIn += diff; // 數量無故變多，強制作入庫
+                remarksIn = "系統調整 (數量增加)";
+            }
+
+            let monthNum = m + 4;
+            let calcYear = selectedYear;
+            if (monthNum > 12) {
+                monthNum -= 12;
+                calcYear += 1;
+            }
+            // 使用該月的最後一天作紀錄
+            let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
+
+            if (mIn > 0) {
+                let existingIn = findDuplicateTx(importDate, itemObj, "In");
+                if (!existingIn) {
+                    await addDoc(collection(db, "transactions"), {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "In", qty: mIn, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00")
+                    });
+                    importCount++;
+                } else if (existingIn.qty !== mIn) {
+                    await updateDoc(doc(db, "transactions", existingIn.id), { qty: mIn, remarks: remarksIn });
+                    importCount++;
+                }
+            }
+            if (mOut > 0) {
+                let existingOut = findDuplicateTx(importDate, itemObj, "Out");
+                if (!existingOut) {
+                    await addDoc(collection(db, "transactions"), {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "Out", qty: mOut, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00")
+                    });
+                    importCount++;
+                } else if (existingOut.qty !== mOut) {
+                    await updateDoc(doc(db, "transactions", existingOut.id), { qty: mOut, remarks: remarksOut });
+                    importCount++;
+                }
+            }
+            
+            // 更新目前結餘以供下個月份計算
+            currentBal = mBal; 
           }
-
-          // 當有 IN 或 OUT 時，把之前隱藏跳過的結餘誤差，附加到本次寫入的系統調整中
-          let totalSysAdjust = pendingAdjust + (mBal - expectedBal);
-          pendingAdjust = 0; // 誤差已附加，清零
-
-          let monthNum = m + 4; let calcYear = selectedYear;
-          if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
-          let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
-
-          if (mIn > 0) {
-              let adj = totalSysAdjust; totalSysAdjust = 0; // 全數附加在 In 上
-              let remarksIn = adj > 0 ? "系統調整 (數量增加)" : (adj < 0 ? "系統調整 (數量短缺)" : "");
-              let existingTx = findDuplicateTx(importDate, itemObj, "In");
-              
-              if (existingTx) {
-                  await updateDoc(doc(db, "transactions", existingTx.id), { qty: mIn, sysAdjust: adj, remarks: remarksIn });
-              } else {
-                  await addDoc(collection(db, "transactions"), { 
-                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                      type: "In", qty: mIn, sysAdjust: adj, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00") 
-                  });
-                  importCount++;
-              }
-          }
-
-          if (mOut > 0) {
-              let adj = totalSysAdjust; totalSysAdjust = 0; // 若上方 mIn 沒消耗掉，則附加在 Out
-              let remarksOut = adj > 0 ? "系統調整 (數量增加)" : (adj < 0 ? "系統調整 (數量短缺/掉棄)" : "");
-              let existingTx = findDuplicateTx(importDate, itemObj, "Out");
-              
-              if (existingTx) {
-                  await updateDoc(doc(db, "transactions", existingTx.id), { qty: mOut, sysAdjust: adj, remarks: remarksOut });
-              } else {
-                  await addDoc(collection(db, "transactions"), { 
-                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                      type: "Out", qty: mOut, sysAdjust: adj, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00") 
-                  });
-                  importCount++;
-              }
-          }
-          currentBal = mBal; // 強制結餘跟足 Excel 的 balance
-      }
         }
         document.body.removeChild(loadingDiv);
-        alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增 ${importCount} 筆交易紀錄。`); loadStockData();
-      } catch (err) { console.error(err); if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); alert("❌ 解析或匯入 Excel 失敗"); }
+        alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增或更新 ${importCount} 筆交易紀錄。\n(所有物品的系統結餘已 100% 強制對齊 Excel)`);
+        loadStockData();
+      } catch (err) {
+        console.error(err); 
+        if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); 
+        alert("❌ 解析或匯入 Excel 失敗，請確認檔案格式是否正確。");
+      }
     }
 
     window.handleExcelFileUpload = function(e) {
