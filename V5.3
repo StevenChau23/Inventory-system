@@ -750,8 +750,8 @@ const checkMatch = (mHa, mCat, mDesc) => {
             // 更新目前結餘以供下個月份計算
             currentBal = mBal; 
           }
-        }
-        document.body.removeChild(loadingDiv);
+          
+          document.body.removeChild(loadingDiv);
         alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增或更新 ${importCount} 筆交易紀錄。\n(所有物品的系統結餘已 100% 強制對齊 Excel)`);
         loadStockData();
       } catch (err) {
