@@ -62,19 +62,30 @@
         return { mCat, mDesc, mCode };
     }
 
-    // --- 視圖切換與登入控制 ---
+// --- 視圖切換與登入控制 ---
     window.showMainMenu = function() {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-        document.getElementById('mainMenu').classList.add('active');
-        document.getElementById('backBtn').style.display = 'none';
-        document.querySelector('.main-title').style.display = 'block';
+        let menu = document.getElementById('mainMenu');
+        if (menu) menu.classList.add('active');
+        
+        let btn = document.getElementById('backBtn');
+        if (btn) btn.style.display = 'none';
+        
+        let title = document.querySelector('.main-title');
+        if (title) title.style.display = 'block';
     }
 
     window.showView = function(viewId) {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-        document.getElementById(viewId).classList.add('active');
-        document.getElementById('backBtn').style.display = 'inline-flex';
-        document.querySelector('.main-title').style.display = 'none';
+        
+        let view = document.getElementById(viewId);
+        if (view) view.classList.add('active');
+        
+        let btn = document.getElementById('backBtn');
+        if (btn) btn.style.display = 'inline-flex';
+        
+        let title = document.querySelector('.main-title');
+        if (title) title.style.display = 'none';
 
         if(viewId === 'view-purchase') loadPurchaseList();
         if(viewId === 'view-expiry') renderExpiryTable();
@@ -1448,19 +1459,32 @@ if (searchText !== "") {
       } catch (err) { console.error(err); document.body.removeChild(loadingDiv); alert("❌ 匯入過程發生錯誤"); }
     };
 
-    window.onload = () => {
+window.onload = () => {
       loadMasterItems().then(() => { loadStockData(); });
-      const theadTr = document.getElementById('purchaseTheadTr');
-      columns.forEach(col => { let th = document.createElement('th'); th.innerText = col; theadTr.appendChild(th); });
-      let thStatus = document.createElement('th'); thStatus.innerText = "狀態"; theadTr.appendChild(thStatus);
-
-      document.getElementById('purchaseTable').addEventListener('paste', handleExcelPaste);
-      if (document.getElementById('masterPasteArea')) document.getElementById('masterPasteArea').addEventListener('paste', handleMasterPaste);
-      if (document.getElementById('stockPasteArea')) document.getElementById('stockPasteArea').addEventListener('paste', handleStockExcelPaste);
-      if (document.getElementById('excelFileInput')) document.getElementById('excelFileInput').addEventListener('change', handleExcelFileUpload);
       
-      document.getElementById('qty').addEventListener('input', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
-      document.getElementById('type').addEventListener('change', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+      const theadTr = document.getElementById('purchaseTheadTr');
+      if (theadTr) {
+          columns.forEach(col => { let th = document.createElement('th'); th.innerText = col; theadTr.appendChild(th); });
+          let thStatus = document.createElement('th'); thStatus.innerText = "狀態"; theadTr.appendChild(thStatus);
+      }
+
+      const pTable = document.getElementById('purchaseTable');
+      if (pTable) pTable.addEventListener('paste', handleExcelPaste);
+      
+      const mPaste = document.getElementById('masterPasteArea');
+      if (mPaste) mPaste.addEventListener('paste', handleMasterPaste);
+      
+      const sPaste = document.getElementById('stockPasteArea');
+      if (sPaste) sPaste.addEventListener('paste', handleStockExcelPaste);
+      
+      const fileInput = document.getElementById('excelFileInput');
+      if (fileInput) fileInput.addEventListener('change', handleExcelFileUpload);
+      
+      const qtyEl = document.getElementById('qty');
+      if (qtyEl) qtyEl.addEventListener('input', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+      
+      const typeEl = document.getElementById('type');
+      if (typeEl) typeEl.addEventListener('change', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
     };
   </script>
 
