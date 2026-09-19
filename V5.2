@@ -409,9 +409,9 @@ let targetKey = getItemBalanceKey({ item: itemName, category: category });
       } catch (error) { console.error(error); alert("寫入失敗"); submitBtn.disabled = false; submitBtn.innerText = "提交紀錄"; }
     });
 
-function isDuplicateTx(date, itemObj, type) {
-      // 移除對 qty 與 sysAdjust 的強制比對，只要該月份該物品已有 In/Out/Opening，即視為重覆 (解決結餘重覆問題)
-      return transactionsData.some(t => 
+function findDuplicateTx(date, itemObj, type) {
+      // 修改為 find() 讓系統能取得具體的紀錄 ID 和數量，解決匯入 Excel 失敗的問題
+      return transactionsData.find(t => 
         t.date === date && t.type === type && 
         (t.category || 'Consumable') === (itemObj.category || 'Consumable') && isSameItem(t, itemObj)
       );
