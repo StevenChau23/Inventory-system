@@ -622,22 +622,26 @@ window.fixSystemBalances = async function() {
           let foundExisting = false;
           let fuzzyMatchedMaster = null; 
           
-          const checkMatch = (mHa, mCat, mDesc) => {
-              let matchCount = 0;
-              if (nHa && nHa !== 'na' && mHa === nHa) matchCount += 2;
-              if (nCat && mCat === nCat) matchCount += 1;
-              if (nDesc && mDesc === nDesc) matchCount += 1;
-              return matchCount >= 2;
-          };
+const checkMatch = (mHa, mCat, mDesc) => {
+                  if (nHa && nHa !== 'na' && mHa === nHa) return true; 
+                  if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
+                  if (nCat && !nDesc) return (mCat === nCat);
+                  if (!nCat && nDesc) return (mDesc === nDesc);
+                  return false;
+              };
 
           for (let m of masterItemsData) {
               let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
               if (checkMatch(mHa, mCat, mDesc)) {
                   haCode = m.code !== 'NA' && m.code !== "" ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
                   foundExisting = true; break;
-              } else if (!foundExisting) {
-                  let sim = getSimilarity(String(catNo) + String(desc), String(m.catNo || "") + String(m.desc || ""));
-                  if (sim >= 0.8 && sim < 1.0) { fuzzyMatchedMaster = m; }
+} else if (!foundExisting) {
+                  let strNew = String(catNo) + String(desc);
+                  let strOld = String(m.catNo || "") + String(m.desc || "");
+                  let sim = getSimilarity(strNew, strOld);
+                  // 提高純數字或短字串的門檻至 0.9，防止 41010057 和 41010058 被判定為同一物品
+                  let threshold = (strNew.length < 10 || /^\d+$/.test(strNew)) ? 0.9 : 0.8;
+                  if (sim >= threshold && sim < 1.0) { fuzzyMatchedMaster = m; }
               }
           }
 
@@ -668,17 +672,20 @@ window.fixSystemBalances = async function() {
           if (!finalItemName) finalItemName = catNo || desc || haCode;
           let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
 
-          // 寫入期初結餘 (Opening Balance)
+// 寫入期初結餘 (Opening Balance)
           let openDate = `${selectedYear}-04-01`; 
           let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
           if (!existingOpen && currentBal > 0) {
-             await addDoc(collection(db, "transactions"), {
+             let newTx = {
                   category: selectedCategory, date: openDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
                   type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00")
-              });
+              };
+             let docRef = await addDoc(collection(db, "transactions"), newTx);
+             transactionsData.push({ id: docRef.id, ...newTx }); // 更新本地緩存防重覆
              importCount++;
           } else if (existingOpen && existingOpen.qty !== currentBal) {
              await updateDoc(doc(db, "transactions", existingOpen.id), { qty: currentBal });
+             existingOpen.qty = currentBal; // 更新本地緩存
              importCount++;
           }
 
@@ -693,55 +700,52 @@ window.fixSystemBalances = async function() {
             if (isNaN(mBal)) continue;
 
             let expectedBal = currentBal + mIn - mOut;
-            let remarksOut = "";
-            let remarksIn = "";
+            let remarksOut = ""; let remarksIn = "";
             
-            // 核心修正：強制對齊 Excel 最終結餘數值，若有差距自動生出補償 Out/In
             if (expectedBal > mBal) {
-                let diff = expectedBal - mBal;
-                mOut += diff; // 數量短缺，強制作出庫 (掉棄)
-                remarksOut = "系統調整 (數量短缺/過期掉棄)";
+                let diff = expectedBal - mBal; mOut += diff; remarksOut = "系統調整 (數量短缺/過期掉棄)";
             } else if (expectedBal < mBal) {
-                let diff = mBal - expectedBal;
-                mIn += diff; // 數量無故變多，強制作入庫
-                remarksIn = "系統調整 (數量增加)";
+                let diff = mBal - expectedBal; mIn += diff; remarksIn = "系統調整 (數量增加)";
             }
 
-            let monthNum = m + 4;
-            let calcYear = selectedYear;
-            if (monthNum > 12) {
-                monthNum -= 12;
-                calcYear += 1;
-            }
-            // 使用該月的最後一天作紀錄
+            let monthNum = m + 4; let calcYear = selectedYear;
+            if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
             let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
 
             if (mIn > 0) {
                 let existingIn = findDuplicateTx(importDate, itemObj, "In");
                 if (!existingIn) {
-                    await addDoc(collection(db, "transactions"), {
+                    let newTx = {
                         category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
                         type: "In", qty: mIn, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00")
-                    });
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
                     importCount++;
                 } else if (existingIn.qty !== mIn) {
                     await updateDoc(doc(db, "transactions", existingIn.id), { qty: mIn, remarks: remarksIn });
+                    existingIn.qty = mIn; existingIn.remarks = remarksIn;
                     importCount++;
                 }
             }
             if (mOut > 0) {
                 let existingOut = findDuplicateTx(importDate, itemObj, "Out");
                 if (!existingOut) {
-                    await addDoc(collection(db, "transactions"), {
+                    let newTx = {
                         category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
                         type: "Out", qty: mOut, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00")
-                    });
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
                     importCount++;
                 } else if (existingOut.qty !== mOut) {
                     await updateDoc(doc(db, "transactions", existingOut.id), { qty: mOut, remarks: remarksOut });
+                    existingOut.qty = mOut; existingOut.remarks = remarksOut;
                     importCount++;
                 }
             }
+            currentBal = mBal; 
+          }
             
             // 更新目前結餘以供下個月份計算
             currentBal = mBal; 
