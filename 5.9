@@ -504,7 +504,7 @@ document.getElementById('stockForm').addEventListener('submit', async (e) => {
                   p_haCode = (mCode && mCode !== 'NA') ? mCode : p_haCode; p_catNo = m.catNo || p_catNo; p_desc = m.desc || p_desc;
                   rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
               } else if (action === 'B') {
-                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: uomVal || "", category: selectedCategory }); } catch(err){}
               } else if (action === 'C') {
                   submitBtn.innerText = "已跳過紀錄"; setTimeout(() => { submitBtn.innerText = "提交紀錄"; submitBtn.disabled = false; }, 2000);
                   return; // 取消寫入資料庫
@@ -694,8 +694,8 @@ window.fixSystemBalances = async function() {
       document.body.appendChild(loadingDiv);
 
       try {
-        let idxDesc = -1, idxCat = -1, idxHaCode = -1, idxOpenBal = -1;
-        
+let idxDesc = -1, idxCat = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
+
         // 1. 掃描前 10 行尋找 Metadata 的確切欄位
         for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
             let row = matrixRows[r] || [];
@@ -705,8 +705,9 @@ window.fixSystemBalances = async function() {
                 if (cellVal === 'itemdescription' || cellVal === 'description') idxDesc = c;
                 else if (cellVal === 'catno') idxCat = c;
                 else if (cellVal === 'cssdcode' || cellVal === 'haitemcode') idxHaCode = c;
-                else if (cellVal === 'openingbalance' || cellVal === 'openbal') idxOpenBal = c;
-            }
+else if (cellVal === 'openingbalance' || cellVal === 'openbal') idxOpenBal = c;
+                else if (cellVal.includes('uom') && idxUom === -1) idxUom = c; // 支援 UOM 或 UOM (Box)           
+                }
         }
 
         // 2. 找出 12 個月份的 In/Out/Balance 欄位群組
@@ -741,7 +742,8 @@ window.fixSystemBalances = async function() {
 
           let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
           let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
-          let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+          let uomVal = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
           
           if (!haCode || haCode.trim() === "") haCode = "NA";
           
@@ -777,7 +779,7 @@ window.fixSystemBalances = async function() {
               }
           }
 
-          let rowData = { catNo, desc, haCode, currentBal, cells };
+let rowData = { catNo, desc, haCode, currentBal, cells, uomVal };
 
           if (foundExisting) {
               // 100% 吻合
@@ -863,7 +865,7 @@ window.fixSystemBalances = async function() {
 
           // 若標記為全新物品(選項B或數字不同)，將其寫入 Master List (已存在則報錯忽略避免卡死)
           if (isNewMaster) {
-              try { await addDoc(collection(db, "master_items"), { catNo: catNo||"", desc: desc||"", code: haCode||"NA", uom: "", category: selectedCategory }); } catch(err){}
+              try { await addDoc(collection(db, "master_items"), { catNo: catNo||"", desc: desc||"", code: haCode||"NA", uom: uomVal || "", category: selectedCategory }); } catch(err){}
           }
           
           let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
@@ -1433,13 +1435,53 @@ if (searchText !== "") {
         document.body.style.cursor = 'default';
     };
 
+// --- Master List 的分類狀態與 Location 下拉清單建立 ---
+    window.currentMasterCategory = 'All'; 
+    window.setMasterCategory = function(cat) {
+        window.currentMasterCategory = cat;
+        renderMasterList();
+    };
+
+    if (!document.getElementById('locationList')) {
+        const datalist = document.createElement('datalist');
+        datalist.id = 'locationList';
+        // 在這裡加入你希望出現的下拉建議選項，可以隨時新增
+        datalist.innerHTML = `<option value="LG01"></option><option value="LG02"></option>`; 
+        document.body.appendChild(datalist);
+    }
+
     window.renderMasterList = function() {
         const tbody = document.getElementById('masterTbody');
         tbody.innerHTML = "";
         
-        const thead = tbody.parentElement.querySelector('thead tr');
+        const table = tbody.parentElement;
+        
+        // --- 注入 UI 篩選按鈕 ---
+        if (!document.getElementById('masterCategoryFilter')) {
+            const filterDiv = document.createElement('div');
+            filterDiv.id = 'masterCategoryFilter';
+            filterDiv.style.marginBottom = '15px';
+            table.parentNode.insertBefore(filterDiv, table);
+        }
+        
+        const filterDiv = document.getElementById('masterCategoryFilter');
+        filterDiv.innerHTML = `
+            <button onclick="setMasterCategory('All')" style="background:${window.currentMasterCategory === 'All' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'All' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px; margin-right:5px;">全部 (All)</button>
+            <button onclick="setMasterCategory('Drape')" style="background:${window.currentMasterCategory === 'Drape' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Drape' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px; margin-right:5px;">Drape 類別</button>
+            <button onclick="setMasterCategory('Consumable')" style="background:${window.currentMasterCategory === 'Consumable' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Consumable' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px;">Consumable 類別</button>
+        `;
+
+        const thead = table.querySelector('thead tr');
         if (thead && !thead.dataset.patched) {
             thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
+            
+            // 動態插入 Location 標題在最後一個欄位(操作)之前
+            let ths = thead.querySelectorAll('th');
+            if(ths.length > 0) {
+                let newTh = document.createElement('th');
+                newTh.innerText = 'Location';
+                thead.insertBefore(newTh, ths[ths.length - 1]);
+            }
             thead.dataset.patched = "true";
         }
 
@@ -1448,20 +1490,27 @@ if (searchText !== "") {
         
         masterItemsData.forEach(m => {
             let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
-            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: m.category || 'Master', isMaster: true });
+            // 抓取 location 數據
+            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', location: m.location || '', category: m.category || 'Master', isMaster: true });
         });
 
         transactionsData.forEach(t => {
             let { mCat, mDesc, mCode } = extractItemDetails(t);
             let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
             if(!allItemsMap.has(key)) {
-                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
+                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', location: '', category: t.category || 'Consumable', isMaster: false });
             }
         });
 
         let displayData = Array.from(allItemsMap.values());
+        
+        // 根據 UI 按鈕進行過濾
+        if(window.currentMasterCategory !== 'All') {
+            displayData = displayData.filter(d => d.category === window.currentMasterCategory);
+        }
+
         if(searchText) displayData = displayData.filter(d => d.cat.toLowerCase().includes(searchText) || d.desc.toLowerCase().includes(searchText) || d.code.toLowerCase().includes(searchText));
-        if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='7' style='text-align:center;'>無相符資料</td></tr>"; return; }
+        if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='8' style='text-align:center;'>無相符資料</td></tr>"; return; }
 
         displayData.forEach(d => {
             let tr = document.createElement('tr');
@@ -1480,12 +1529,14 @@ if (searchText !== "") {
 
             let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
 
+            // 新增 d.location 在畫面上
             tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
                             <td><span style="${catStyle}">${d.category}</span></td>
                             <td style="font-weight:bold;">${d.cat}</td>
                             <td>${d.desc}</td>
                             <td>${d.code}</td>
                             <td>${d.uom}</td>
+                            <td style="font-weight:bold; color:#2980b9;">${d.location}</td>
                             <td>${actionHtml}</td>`;
             tbody.appendChild(tr);
         });
@@ -1498,7 +1549,7 @@ if (searchText !== "") {
         let uom = document.getElementById('newMasterUom').value.trim();
         if(!catNo && !desc) { alert("請至少填寫 Cat no 或 Description！"); return; }
         try {
-            await addDoc(collection(db, "master_items"), { catNo, desc, code, uom });
+            await addDoc(collection(db, "master_items"), { catNo, desc, code, uom, location: '' });
             alert("🎉 成功手動新增物品至總表！");
             document.getElementById('newMasterCatNo').value = '';
             document.getElementById('newMasterDesc').value = '';
@@ -1513,12 +1564,14 @@ if (searchText !== "") {
         const item = masterItemsData.find(m => m.id === id);
         if(!item) return;
         const tr = document.getElementById(`master-row-${id}`);
+        // 這裡的 Location input 加入了 list="locationList"，會自動觸發剛才建立的下拉選單
         tr.innerHTML = `
             <td><span style="background:#f39c12;color:white;padding:3px 8px;border-radius:4px;">Master</span></td>
             <td><input type="text" id="edit-m-cat-${id}" value="${item.catNo || ''}" class="inline-edit"></td>
             <td><input type="text" id="edit-m-desc-${id}" value="${item.desc || ''}" class="inline-edit" style="width: 95%;"></td>
             <td><input type="text" id="edit-m-code-${id}" value="${item.code === 'NA' ? '' : item.code}" class="inline-edit"></td>
-            <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 80px;"></td>
+            <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 60px;"></td>
+            <td><input type="text" id="edit-m-loc-${id}" value="${item.location || ''}" class="inline-edit" list="locationList" style="width: 70px;" placeholder="LG01"></td>
             <td>
                 <button class="action-btn save-btn" onclick="saveMasterItem('${id}')">💾</button>
                 <button class="action-btn cancel-btn" onclick="renderMasterList()">取消</button>
@@ -1531,9 +1584,10 @@ if (searchText !== "") {
         const desc = document.getElementById(`edit-m-desc-${id}`).value.trim();
         const code = document.getElementById(`edit-m-code-${id}`).value.trim() || "NA";
         const uom = document.getElementById(`edit-m-uom-${id}`).value.trim();
+        const location = document.getElementById(`edit-m-loc-${id}`).value.trim();
 
         try {
-            await updateDoc(doc(db, "master_items", id), { catNo, desc, code, uom });
+            await updateDoc(doc(db, "master_items", id), { catNo, desc, code, uom, location });
             await loadMasterItems();
             renderMasterList();
         } catch(e) { console.error(e); alert("更新失敗"); }
