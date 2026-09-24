@@ -186,14 +186,14 @@ function normalizeCode(code) {
                     ? `<span style="background:#e74c3c;color:white;padding:2px 6px;border-radius:4px;font-size:12px;">高風險差異(數字不同)</span>` 
                     : `<span style="background:#f39c12;color:white;padding:2px 6px;border-radius:4px;font-size:12px;">相似度: ${Math.round(item.sim * 100)}%</span>`;
 
-                return `
+return `
                     <tr style="border-bottom:1px solid #ccc; background: ${item.numberMismatch ? '#ffebee' : '#fff'}">
                         <td style="padding:10px;font-size:14px;vertical-align:top;">${newText}</td>
-                        <td style="padding:10px;font-size:14px;vertical-align:top;">${oldText}<br>${riskBadge}</td>
+                        <td style="padding:10px;font-size:14px;vertical-align:top;">${oldText}</td>
                         <td style="padding:10px;vertical-align:top;font-size:14px;">
-                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="A" ${checkedA}> [A] 視為既有 Master 物品 (合併)</label>
-                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="B" ${checkedB}> [B] 視為全新物品 (寫入新紀錄)</label>
-                            <label style="display:block;cursor:pointer;"><input type="radio" name="action_${index}" value="C" ${checkedC}> [C] 不需要紀錄 (直接跳過)</label>
+                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="A" ${checkedA}> 【選項 A】視為既有 Master 物品 (將此筆紀錄合併至該 Master 項目)</label>
+                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="B" ${checkedB}> 【選項 B】視為全新物品 (寫入資料庫並自動加入 Master List)</label>
+                            <label style="display:block;cursor:pointer;"><input type="radio" name="action_${index}" value="C" ${checkedC}> 【選項 C】不需要紀錄 (直接跳過)</label>
                         </td>
                     </tr>
                 `;
@@ -202,7 +202,7 @@ function normalizeCode(code) {
             modal.innerHTML = `
                 <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:1000px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 5px 15px rgba(0,0,0,0.3);">
                     <h3 style="color:#2c3e50;margin-top:0;">⚠️ 待確認相似物品列表 (Batch Review)</h3>
-                    <p style="color:#555;">系統發現以下物品與資料庫現有物品相似 (40%~99%)，或存在數字差異。請一次過勾選處理方式：</p>
+                    <p style="color:#555;">系統發現以下物品與資料庫現有物品高度相似 (≥75%)。請一次過勾選處理方式：</p>
                     <div style="overflow-y:auto;flex-grow:1;border:1px solid #ddd;margin-bottom:15px;">
                         <table style="width:100%;border-collapse:collapse;text-align:left;">
                             <thead style="background:#f4f7f6;position:sticky;top:0;z-index:1;">
@@ -429,7 +429,7 @@ let targetKey = getItemBalanceKey({ item: itemName, category: category });
         if (addBox && addInput && e.target !== addBox && e.target !== addInput && !addBox.contains(e.target)) addBox.style.display = "none";
     });
 
-    document.getElementById('stockForm').addEventListener('submit', async (e) => {
+document.getElementById('stockForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const submitBtn = document.getElementById('submitBtn');
       submitBtn.innerText = "寫入中..."; submitBtn.disabled = true;
@@ -441,10 +441,82 @@ let targetKey = getItemBalanceKey({ item: itemName, category: category });
           p_catNo = parts[0] ? parts[0].trim() : "";
           p_desc = parts[1] ? parts[1].trim() : "";
           p_haCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
+      } else {
+          p_desc = rawItem; // 如果沒有分隔符號，預設輸入當作 description
+      }
+
+      const selectedCategory = document.getElementById('addCategory').value;
+
+      // ==========================================
+      // 套用第三點：手動新增時的 75% 相似度與數字敏感度檢查
+      // ==========================================
+      let nHa = normalizeCode(p_haCode); let nCat = normalizeCode(p_catNo); let nDesc = normalizeCode(p_desc);
+      let foundExisting = false; let exactMatchRef = null;
+      
+      const checkMatch = (mHa, mCat, mDesc) => {
+          if (nHa && nHa !== 'na' && mHa === nHa) return true; 
+          if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
+          if (nCat && !nDesc) return (mCat === nCat);
+          if (!nCat && nDesc) return (mDesc === nDesc);
+          return false;
+      };
+
+      for (let m of masterItemsData) { if (checkMatch(normalizeCode(m.code), normalizeCode(m.catNo), normalizeCode(m.desc))) { exactMatchRef = m; foundExisting = true; break; } }
+      if (!foundExisting) { for (let t of transactionsData) { if (checkMatch(normalizeCode(t.haCode), normalizeCode(t.catNo), normalizeCode(t.desc))) { exactMatchRef = t; foundExisting = true; break; } } }
+
+      if (foundExisting) {
+          // 100% 吻合
+          p_haCode = exactMatchRef.code !== undefined && exactMatchRef.code !== 'NA' && exactMatchRef.code !== "" ? exactMatchRef.code : (exactMatchRef.haCode !== 'NA' && exactMatchRef.haCode ? exactMatchRef.haCode : p_haCode);
+          p_catNo = exactMatchRef.catNo || p_catNo; p_desc = exactMatchRef.desc || p_desc;
+          rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
+      } else {
+          // 檢查相似度與數字差異 (以 Cat No 優先，再看 Description / HA code)
+          let bestFuzzyMatch = null; let highestSim = 0;
+          let strNew = p_catNo ? p_catNo : (p_desc ? p_desc : (p_haCode && p_haCode !== 'NA' ? p_haCode : rawItem));
+
+          for (let m of masterItemsData) {
+              let mCode = (m.code && m.code !== 'NA') ? m.code : "";
+              let strOld = m.catNo ? m.catNo : (m.desc ? m.desc : mCode);
+              let sim = getSimilarity(strNew, strOld);
+              if (sim > highestSim) { highestSim = sim; bestFuzzyMatch = m; }
+          }
+          
+          let isNumberMismatch = false;
+          if (bestFuzzyMatch) {
+              let mCode = (bestFuzzyMatch.code && bestFuzzyMatch.code !== 'NA') ? bestFuzzyMatch.code : "";
+              let strOld = bestFuzzyMatch.catNo ? bestFuzzyMatch.catNo : (bestFuzzyMatch.desc ? bestFuzzyMatch.desc : mCode);
+              let numsNew = String(strNew).match(/\d+/g)?.join(',') || ''; let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+              if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") isNumberMismatch = true;
+          }
+
+          if (isNumberMismatch) {
+              // 數字不同，直接視為新 item 並加入 Master List
+              try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+          } else if (highestSim >= 0.75 && highestSim < 1.0) {
+              // >=75%相似，彈出視窗 (沿用批量確認Modal，只送一筆進去)
+              let reviewResults = await window.showBatchReviewModal([{
+                  newRow: { catNo: p_catNo, desc: p_desc, haCode: p_haCode }, suggestedMatch: bestFuzzyMatch, sim: highestSim, numberMismatch: false
+              }]);
+              let action = reviewResults[0];
+              
+              if (action === 'A') {
+                  let m = bestFuzzyMatch; let mCode = m.code !== undefined ? m.code : m.haCode;
+                  p_haCode = (mCode && mCode !== 'NA') ? mCode : p_haCode; p_catNo = m.catNo || p_catNo; p_desc = m.desc || p_desc;
+                  rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
+              } else if (action === 'B') {
+                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+              } else if (action === 'C') {
+                  submitBtn.innerText = "已跳過紀錄"; setTimeout(() => { submitBtn.innerText = "提交紀錄"; submitBtn.disabled = false; }, 2000);
+                  return; // 取消寫入資料庫
+              }
+          } else {
+              // <75% 完全不相似，寫入資料庫並自動加入 Master List
+              try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+          }
       }
 
       const data = {
-        category: document.getElementById('addCategory').value,
+        category: selectedCategory,
         date: document.getElementById('date').value,
         item: rawItem,
         catNo: p_catNo,
@@ -673,8 +745,8 @@ window.fixSystemBalances = async function() {
           
           if (!haCode || haCode.trim() === "") haCode = "NA";
           
-          // 【規則 1】: 即使 cat no 和 ha item 空白，只要有 description 都紀錄
-          if (!catNo && !desc && (haCode === "NA" || !haCode)) continue; 
+// 【規則 1】: 要求上傳的excel內每下一行都是獨立新item，即使這3項只有一項有資料都必須紀錄
+          if (catNo === "" && desc === "" && (haCode === "NA" || haCode === "")) continue; 
 
           // 讀取期初結餘
           let currentBal = 0;
@@ -697,22 +769,18 @@ window.fixSystemBalances = async function() {
 
           // 1. 完全吻合檢查
           for (let m of masterItemsData) {
-              if (checkMatch(normalizeCode(m.code), normalizeCode(m.catNo), normalizeCode(m.desc))) {
-                  exactMatchRef = m; foundExisting = true; break;
-              }
+              if (checkMatch(normalizeCode(m.code), normalizeCode(m.catNo), normalizeCode(m.desc))) { exactMatchRef = m; foundExisting = true; break; }
           }
           if (!foundExisting) {
               for (let t of transactionsData) {
-                  if (checkMatch(normalizeCode(t.haCode), normalizeCode(t.catNo), normalizeCode(t.desc))) {
-                      exactMatchRef = t; foundExisting = true; break;
-                  }
+                  if (checkMatch(normalizeCode(t.haCode), normalizeCode(t.catNo), normalizeCode(t.desc))) { exactMatchRef = t; foundExisting = true; break; }
               }
           }
 
           let rowData = { catNo, desc, haCode, currentBal, cells };
 
           if (foundExisting) {
-              // 100% 吻合，自動加入待處理名單
+              // 100% 吻合
               rowData.haCode = exactMatchRef.code !== undefined && exactMatchRef.code !== 'NA' && exactMatchRef.code !== "" ? exactMatchRef.code : (exactMatchRef.haCode !== 'NA' && exactMatchRef.haCode ? exactMatchRef.haCode : haCode); 
               rowData.catNo = exactMatchRef.catNo || catNo; 
               rowData.desc = exactMatchRef.desc || desc;
@@ -721,38 +789,40 @@ window.fixSystemBalances = async function() {
               // 2. 相似度與數字差異檢查
               let bestFuzzyMatch = null;
               let highestSim = 0;
-              let strNew = String(catNo) + String(desc);
+              // 【規則 3】: 如cat no為空白，則參照description或HA item code
+              let strNew = catNo ? catNo : (desc ? desc : (haCode && haCode !== 'NA' ? haCode : ""));
 
               // 檢查 Master
               for (let m of masterItemsData) {
-                  let strOld = String(m.catNo || "") + String(m.desc || "");
+                  let mCode = (m.code && m.code !== 'NA') ? m.code : "";
+                  let strOld = m.catNo ? m.catNo : (m.desc ? m.desc : mCode);
                   let sim = getSimilarity(strNew, strOld);
                   if (sim > highestSim) { highestSim = sim; bestFuzzyMatch = m; }
-              }
-              // 【規則 4】: 與已寫入的 item 比較相似度
-              for (let t of transactionsData) {
-                  let strOld = String(t.catNo || "") + String(t.desc || "");
-                  let sim = getSimilarity(strNew, strOld);
-                  if (sim > highestSim) { highestSim = sim; bestFuzzyMatch = t; }
               }
 
               let isNumberMismatch = false;
               if (bestFuzzyMatch) {
-                  let strOld = String(bestFuzzyMatch.catNo || "") + String(bestFuzzyMatch.desc || "");
+                  let matchCode = (bestFuzzyMatch.code || bestFuzzyMatch.haCode || "");
+                  let strOld = bestFuzzyMatch.catNo ? bestFuzzyMatch.catNo : (bestFuzzyMatch.desc ? bestFuzzyMatch.desc : (matchCode !== 'NA' ? matchCode : ""));
                   let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
                   let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
                   
-                  // 【規則 2】: 數字敏感度檢查
+                  // 【規則 2】: 數字敏感度作為第二防線 (只要數字不同直接判定為不同物品)
                   if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") {
                       isNumberMismatch = true;
                   }
               }
 
-              // 【規則 3】: 落入 40% ~ 99% 或 包含數字差異，進入批次待確認列表
-              if ((highestSim >= 0.4 && highestSim < 1.0) || isNumberMismatch) {
-                  pendingReviewItems.push({ newRow: rowData, suggestedMatch: bestFuzzyMatch, sim: highestSim, numberMismatch: isNumberMismatch });
+              if (isNumberMismatch) {
+                  // 【規則 2】: 數字不同，直接新增為新item (自動加入Master)
+                  rowData.isNewMaster = true; 
+                  readyToProcessItems.push(rowData);
+              } else if (highestSim >= 0.75 && highestSim < 1.0) {
+                  // 【規則 3】: 落入 75% 相似門檻，進入批次待確認列表
+                  pendingReviewItems.push({ newRow: rowData, suggestedMatch: bestFuzzyMatch, sim: highestSim, numberMismatch: false });
               } else {
-                  // 完全不相似的新物品 (<40%)
+                  // 完全不相似的新物品 (<75%) (自動加入Master)
+                  rowData.isNewMaster = true; 
                   readyToProcessItems.push(rowData);
               }
           }
@@ -766,17 +836,20 @@ window.fixSystemBalances = async function() {
             for (let i = 0; i < pendingReviewItems.length; i++) {
                 let action = reviewResults[i];
                 let item = pendingReviewItems[i];
-                if (action === 'A') { // 視為既有 Master 物品 (合併)
+                if (action === 'A') { 
+                    // 【選項 A】視為既有 Master 物品 (合併)
                     let m = item.suggestedMatch;
                     let mCode = m.code !== undefined ? m.code : m.haCode;
                     item.newRow.haCode = (mCode && mCode !== 'NA') ? mCode : item.newRow.haCode;
                     item.newRow.catNo = m.catNo || item.newRow.catNo;
                     item.newRow.desc = m.desc || item.newRow.desc;
                     readyToProcessItems.push(item.newRow);
-                } else if (action === 'B') { // 視為全新物品
+                } else if (action === 'B') { 
+                    // 【選項 B】視為全新物品 (寫入資料庫並自動加入 Master List)
+                    item.newRow.isNewMaster = true; 
                     readyToProcessItems.push(item.newRow);
-                } else if (action === 'C') { // 不需要紀錄
-                    // 放棄此列，不推入 readyToProcessItems
+                } else if (action === 'C') { 
+                    // 【選項 C】不需要紀錄 (直接跳過)
                 }
             }
             document.body.appendChild(loadingDiv); // 恢復載入提示
@@ -786,7 +859,13 @@ window.fixSystemBalances = async function() {
         
         // 開始將篩選後的資料寫入資料庫
         for (let row of readyToProcessItems) {
-          let { catNo, desc, haCode, currentBal, cells } = row;
+          let { catNo, desc, haCode, currentBal, cells, isNewMaster } = row;
+
+          // 若標記為全新物品(選項B或數字不同)，將其寫入 Master List (已存在則報錯忽略避免卡死)
+          if (isNewMaster) {
+              try { await addDoc(collection(db, "master_items"), { catNo: catNo||"", desc: desc||"", code: haCode||"NA", uom: "", category: selectedCategory }); } catch(err){}
+          }
+          
           let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
           if (!finalItemName) finalItemName = catNo || desc || haCode;
           let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
