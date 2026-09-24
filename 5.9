@@ -236,7 +236,18 @@ return `
         });
     };
 
-    function isSameItem(item1, item2) {
+function isSameItem(item1, item2) {
+      // ===== 第二防線：數字敏感度套用到交易紀錄比對 =====
+      // 避免 S5/S6 寫入資料庫時，因 HA Code 相同導致 In/Out/OpenBal 被互相覆蓋或漏紀錄
+      let str1 = (item1.catNo || "") + " " + (item1.desc || "") + " " + String(item1.item || "");
+      let str2 = (item2.catNo || "") + " " + (item2.desc || "") + " " + String(item2.item || "");
+      let nums1 = String(str1).match(/\d+/g)?.join(',') || '';
+      let nums2 = String(str2).match(/\d+/g)?.join(',') || '';
+      if (nums1 !== nums2 && nums1 !== "" && nums2 !== "") {
+          return false; // 數字不同，直接判定為不同物品，強制系統獨立紀錄
+      }
+      // ================================================
+
       let c1 = normalizeCode(item1.item); let c2 = normalizeCode(item2.item);
       let d1 = normalizeCode(item1.desc); let d2 = normalizeCode(item2.desc);
       let cat1 = normalizeCode(item1.catNo); let cat2 = normalizeCode(item2.catNo);
@@ -251,11 +262,19 @@ return `
 window.getItemBalanceKey = function(t) {
         let { mCat, mDesc, mCode } = extractItemDetails(t);
         let c = normalizeCode(mCode);
-        if (c && c !== "na") return "code:" + c;
         let cat = normalizeCode(mCat);
         let d = normalizeCode(mDesc);
-        if (cat || d) return "catdesc:" + cat + "|" + d;
-        return "raw:" + normalizeCode(t.item || "");
+
+        // ===== 結餘運算套用數字敏感度 =====
+        // 確保結餘系統能分辨 S5, S6，不會因為 HA Code 相同就把結餘加在一起
+        let rawStr = (t.catNo || "") + " " + (t.desc || "") + " " + String(t.item || "");
+        let nums = String(rawStr).match(/\d+/g)?.join(',') || '';
+        let numSuffix = nums ? "|nums:" + nums : "";
+        // ==================================
+
+        if (c && c !== "na") return "code:" + c + numSuffix;
+        if (cat || d) return "catdesc:" + cat + "|" + d + numSuffix;
+        return "raw:" + normalizeCode(t.item || "") + numSuffix;
     };
     window.loadMasterItems = async function() {
         try {
@@ -453,7 +472,16 @@ document.getElementById('stockForm').addEventListener('submit', async (e) => {
       let nHa = normalizeCode(p_haCode); let nCat = normalizeCode(p_catNo); let nDesc = normalizeCode(p_desc);
       let foundExisting = false; let exactMatchRef = null;
       
-      const checkMatch = (mHa, mCat, mDesc) => {
+const checkMatch = (mHa, mCat, mDesc) => {
+          // ===== 加入數字敏感度防線 =====
+          // 確保 S5, S6 不會因為 HA Code 相同而在第一關被誤判為 100% 吻合
+          let strNew = (nCat || "") + (nDesc || "") + (nHa !== 'na' ? nHa : "");
+          let strOld = (mCat || "") + (mDesc || "") + (mHa !== 'na' ? mHa : "");
+          let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
+          let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+          if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") return false;
+          // ===========================
+
           if (nHa && nHa !== 'na' && mHa === nHa) return true; 
           if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
           if (nCat && !nDesc) return (mCat === nCat);
@@ -761,7 +789,15 @@ let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[i
           let foundExisting = false;
           let exactMatchRef = null;
           
-          const checkMatch = (mHa, mCat, mDesc) => {
+const checkMatch = (mHa, mCat, mDesc) => {
+              // ===== 加入數字敏感度防線 =====
+              let strNew = (nCat || "") + (nDesc || "") + (nHa !== 'na' ? nHa : "");
+              let strOld = (mCat || "") + (mDesc || "") + (mHa !== 'na' ? mHa : "");
+              let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
+              let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+              if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") return false;
+              // ===========================
+
               if (nHa && nHa !== 'na' && mHa === nHa) return true; 
               if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
               if (nCat && !nDesc) return (mCat === nCat);
