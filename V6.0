@@ -41,20 +41,33 @@
             mCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
         }
 
-        if (!mCat && !mDesc) {
-            let search = String(t.item).toLowerCase().replace(/[-_\s()]/g, '');
-            let foundMaster = masterItemsData.find(m => {
-                let c = (m.code || "").toLowerCase().replace(/[-_\s()]/g, ''); 
-                let cat = (m.catNo || "").toLowerCase().replace(/[-_\s()]/g, ''); 
-                let d = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
-                return (c && c === search) || (cat && cat === search) || (d && d === search);
+        // ================= 加強與 Master List 的對齊，修復全寫/簡寫漏數問題 =================
+        let searchCode = (mCode !== "NA" ? mCode : "").toLowerCase().replace(/[-_\s()]/g, '');
+        let searchDesc = (mDesc || (!String(t.item).includes(" | ") ? String(t.item) : "")).toLowerCase().replace(/[-_\s()]/g, '');
+
+        let foundMaster = null;
+        if (searchCode || searchDesc) {
+            foundMaster = masterItemsData.find(m => {
+                let mc = (m.code || "").toLowerCase().replace(/[-_\s()]/g, ''); 
+                let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                return (searchCode && mc === searchCode) || (searchDesc && md === searchDesc);
             });
-            if (foundMaster) { 
-                mCode = foundMaster.code || mCode; 
-                mCat = foundMaster.catNo || mCat; 
-                mDesc = foundMaster.desc || mDesc; 
+
+            // 如果找不到完全一致，嘗試模糊比對 (解決手動輸入簡寫 "pouches" 無法對應全寫的問題)
+            if (!foundMaster && searchDesc.length >= 3) {
+                foundMaster = masterItemsData.find(m => {
+                    let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                    return md.includes(searchDesc);
+                });
             }
         }
+
+        if (foundMaster) { 
+            mCode = foundMaster.code || mCode; 
+            mCat = foundMaster.catNo || mCat; 
+            mDesc = foundMaster.desc || mDesc; 
+        }
+        // ====================================================================================
 
         if (!mCode || mCode.trim() === "" || mCode === "NA" || mCode.trim().toLowerCase() === mCat.trim().toLowerCase()) {
             mCode = "NA";
@@ -1220,8 +1233,24 @@ if (searchText !== "") {
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
                 let fieldsToMatch = [ mCode.toLowerCase(), mCat.toLowerCase(), mDesc.toLowerCase(), String(t.item).toLowerCase() ];
-                return searchParts.every(part => { if (!part) return true; return fieldsToMatch.some(f => f.includes(part)); });
-            });
+                
+                // 1. 完全包含：所有 searchParts 都能在 transaction 的欄位中找到
+                let matchAll = searchParts.every(part => { 
+                    if (!part) return true; 
+                    return fieldsToMatch.some(f => f.includes(part)); 
+                });
+                
+                // 2. 允許簡寫或缺少分類也能匹配成功：
+                // 如果交易紀錄中只打了 "pouches"，但被選項的 "s20 / pc400 clear pouches" 包含，也算作符合
+                let matchPartial = fieldsToMatch.some(f => {
+                    if (f.trim().length <= 2) return false;
+                    if (f === 'consumable' || f === 'drape') return false;
+                    return searchParts.some(part => part && part.includes(f));
+                });
+                
+                return matchAll || matchPartial;
+});
+        
         } else {
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
