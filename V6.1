@@ -809,11 +809,15 @@ let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[i
 // 【規則 1】: 要求上傳的excel內每下一行都是獨立新item，即使這3項只有一項有資料都必須紀錄
           if (catNo === "" && desc === "" && (haCode === "NA" || haCode === "")) continue; 
 
-          // 讀取期初結餘
+// 讀取期初結餘
           let currentBal = 0;
+          let isExcelOpenBalEmpty = true; // 紀錄新上載excel的opening balance是否為空白
           if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
               let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim();
-              if (!isNaN(parseFloat(oVal))) currentBal = parseFloat(oVal);
+              if (!isNaN(parseFloat(oVal))) {
+                  currentBal = parseFloat(oVal);
+                  isExcelOpenBalEmpty = false;
+              }
           }
 
           let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
@@ -851,7 +855,7 @@ const checkMatch = (mHa, mCat, mDesc) => {
               }
           }
 
-let rowData = { catNo, desc, haCode, currentBal, cells, uomVal };
+let rowData = { catNo, desc, haCode, currentBal, cells, uomVal, isExcelOpenBalEmpty };
 
           if (foundExisting) {
               // 100% 吻合
@@ -931,9 +935,9 @@ let rowData = { catNo, desc, haCode, currentBal, cells, uomVal };
 
         let importCount = 0;
         
-        // 開始將篩選後的資料寫入資料庫
+// 開始將篩選後的資料寫入資料庫
         for (let row of readyToProcessItems) {
-          let { catNo, desc, haCode, currentBal, cells, isNewMaster } = row;
+          let { catNo, desc, haCode, currentBal, cells, isNewMaster, isExcelOpenBalEmpty, uomVal } = row;
 
           // 若標記為全新物品(選項B或數字不同)，將其寫入 Master List (已存在則報錯忽略避免卡死)
           if (isNewMaster) {
@@ -943,6 +947,28 @@ let rowData = { catNo, desc, haCode, currentBal, cells, uomVal };
           let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
           if (!finalItemName) finalItemName = catNo || desc || haCode;
           let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
+
+          // ===== 新增邏輯：2027 年度起，若 Excel 的期初結餘空白，則自動承接系統上一年度結餘 =====
+          if (selectedYear >= 2027 && isExcelOpenBalEmpty) {
+              let cutoffDate = `${selectedYear}-03-31`; // 取上年度最後一天
+              let targetKey = getItemBalanceKey({ item: finalItemName, category: selectedCategory, catNo: catNo, desc: desc, haCode: haCode });
+              let prevBal = 0;
+              
+              transactionsData.forEach(t => {
+                  if (t.date <= cutoffDate && (t.category || 'Consumable') === selectedCategory) {
+                      let tKey = getItemBalanceKey(t);
+                      if (tKey === targetKey) {
+                          let q = parseFloat(t.qty) || 0;
+                          let adj = parseFloat(t.sysAdjust) || 0;
+                          if (t.type === 'Opening Balance') { prevBal = q; }
+                          else if (t.type === 'In') { prevBal += (q + adj); }
+                          else if (t.type === 'Out') { prevBal -= q; prevBal += adj; }
+                      }
+                  }
+              });
+              currentBal = prevBal; // 直接將上年度系統結餘作為今年的 opening balance
+          }
+          // ======================================================================================
 
           // 寫入期初結餘 (Opening Balance)
           let openDate = `${selectedYear}-04-01`; 
