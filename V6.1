@@ -970,10 +970,11 @@ let rowData = { catNo, desc, haCode, currentBal, cells, uomVal, isExcelOpenBalEm
           }
           // ======================================================================================
 
-          // 寫入期初結餘 (Opening Balance)
+// 寫入期初結餘 (Opening Balance)
           let openDate = `${selectedYear}-04-01`; 
           let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
-          if (!existingOpen && currentBal > 0) {
+          // 【修改這裡】：將 currentBal > 0 改為 currentBal >= 0，確保空白(即結餘為0)時也必定會寫入一筆期初結餘
+          if (!existingOpen && currentBal >= 0) {
              let newTx = {
                   category: selectedCategory, date: openDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
                   type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00")
