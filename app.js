@@ -1,39 +1,21 @@
-// 1. 從 Firebase 官方 CDN 引入模組
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
-// 2. 你的 Firebase 專案設定 (目前先放預設，稍後需要換成你自己的)
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyC2iolu67xguBOEHnJ2cfb3_K-nwQdHACQ",
+  authDomain: "steven-b690f.firebaseapp.com",
+  projectId: "steven-b690f",
+  storageBucket: "steven-b690f.firebasestorage.app",
+  messagingSenderId: "1003575294244",
+  appId: "1:1003575294244:web:d2ac190431626b4b125bb1",
+  measurementId: "G-97R5HBQFTZ"
 };
 
-// 3. 初始化 Firebase 與認證服務
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const provider = new GoogleAuthProvider();
-
-// 4. 綁定 HTML 畫面上的按鈕與文字
-const loginBtn = document.getElementById("loginBtn");
-const dataOutput = document.getElementById("dataOutput");
-
-// 5. 設定當按下「登入帳號」時要執行的動作
-loginBtn.addEventListener("click", () => {
-    dataOutput.innerText = "正在呼叫 Google 登入...";
-    
-    signInWithPopup(auth, provider)
-    .then((result) => {
-        // 登入成功
-        const user = result.user;
-        dataOutput.innerText = `登入成功！你好，${user.displayName} (${user.email})`;
-    })
-    .catch((error) => {
-        // 登入失敗
-        console.error("登入錯誤:", error);
-        dataOutput.innerText = `登入失敗：請檢查 Firebase 設定或 Console 報錯`;
-    });
-});
+const analytics = getAnalytics(app);
