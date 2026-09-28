@@ -3,6 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <title>Stock Take & Purchase 系統</title>
+  
+  <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
+  <style>
+    /* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
+    .view-section {
+        opacity: 0;
+        transform: translateY(15px);
+        transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+    .view-section.active {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    /* 2. 主選單方塊 (選單按鈕或卡片) 的懸停 (Hover) 浮動動畫 */
+    #mainMenu > div, 
+    #mainMenu button,
+    .menu-box {
+        transition: all 0.3s ease-in-out;
+    }
+    #mainMenu > div:hover, 
+    #mainMenu button:hover,
+    .menu-box:hover {
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+    }
+  </style>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- 引入 SheetJS 解析 Excel 檔案 (.xlsx / .xls) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -1844,6 +1872,41 @@ window.onload = () => {
   </script>
 
   <style>
+  /* --- 1. 登入視窗圖片樣式 --- */
+.login-header-img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 15px;
+}
+
+/* --- 2. 主選單方塊由左至右滑入動畫 --- */
+@keyframes slideInFromLeft {
+  0% {
+    opacity: 0;
+    transform: translateX(-60px); /* 由左邊 60px 位置開始 */
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0); /* 滑動至原本位置 */
+  }
+}
+
+/* 讓主選單內的方塊套用動畫 */
+#mainMenu .menu-grid > div,
+#mainMenu .card,
+#mainMenu .menu-card {
+  opacity: 0; /* 初始隱藏 */
+  animation: slideInFromLeft 0.5s ease-out forwards;
+}
+
+/* 由左至右依次延遲顯示 (Staggered Animation) */
+#mainMenu .menu-grid > div:nth-child(1), #mainMenu .card:nth-child(1) { animation-delay: 0.1s; }
+#mainMenu .menu-grid > div:nth-child(2), #mainMenu .card:nth-child(2) { animation-delay: 0.25s; }
+#mainMenu .menu-grid > div:nth-child(3), #mainMenu .card:nth-child(3) { animation-delay: 0.4s; }
+#mainMenu .menu-grid > div:nth-child(4), #mainMenu .card:nth-child(4) { animation-delay: 0.55s; }
+#mainMenu .menu-grid > div:nth-child(5), #mainMenu .card:nth-child(5) { animation-delay: 0.7s; }
     :root {
         --color-blue: #3498db; --color-blue-dark: #2980b9;
         --color-purple: #9b59b6; --color-purple-dark: #8e44ad;
@@ -2015,16 +2078,20 @@ window.onload = () => {
       </div>
   </div>
 
-  <div id="loginModal" class="modal-overlay">
-      <div class="modal-content">
-          <h3>🔒 身份驗證</h3>
-          <p style="color: #7f8c8d; font-size: 0.9rem; margin-bottom: 20px;">請輸入管理員帳號與密碼</p>
-          <input type="text" id="adminUser" placeholder="帳戶名稱 (Username)">
-          <input type="password" id="adminPwd" placeholder="密碼 (Password)" onkeydown="if(event.key==='Enter') verifyAdmin()">
-          <button class="btn-primary" onclick="verifyAdmin()">登入系統</button>
-          <button class="action-btn cancel-btn" style="width: 100%; margin-top: 10px; padding: 12px; border-radius: 6px;" onclick="closeLoginModal()">取消</button>
-      </div>
+<div id="loginModal" class="modal" style="display:none;">
+  <div class="modal-content" style="padding: 0 0 20px 0; overflow: hidden;">
+    <!-- 插入圖1作為登入視窗頂部圖片 -->
+    <img src="KMwNT3jqkSHkcIkp.jpg" alt="Login Background" class="login-header-img">
+    
+    <div style="padding: 0 20px;">
+      <h2 style="margin-top:0;">管理員登入</h2>
+      <input type="text" id="adminUser" placeholder="帳戶名稱"><br><br>
+      <input type="password" id="adminPwd" placeholder="密碼"><br><br>
+      <button onclick="verifyAdmin()">登入</button>
+      <button onclick="closeLoginModal()">取消</button>
+    </div>
   </div>
+</div>
 
   <div id="view-add" class="view-section">
       <div class="card" style="max-width: 800px; margin: 0 auto;">
