@@ -1952,10 +1952,43 @@ window.onload = () => {
     
     .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; align-items: stretch; }
     .grid-2-col > .card { margin-bottom: 0; }
+    /* === 登入畫面樣式開始 === */
+    #login-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #f4f6f9; z-index: 99999;
+      display: flex; justify-content: center; align-items: center;
+      flex-direction: column;
+    }
+    .login-box {
+      background: #fff; padding: 40px; border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 300px;
+    }
+    .login-box h2 { margin-top: 0; color: #2c3e50; margin-bottom: 20px; font-weight: bold; }
+    .login-box input {
+      width: 100%; padding: 12px; margin-bottom: 15px;
+      border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 16px;
+    }
+    .login-box button {
+      width: 100%; padding: 12px; background: #3498db; color: #fff;
+      border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;
+    }
+    .login-box button:hover { background: #2980b9; }
+    .login-error { color: #e74c3c; font-size: 14px; margin-top: 10px; display: none; font-weight: bold; }
+    /* === 登入畫面樣式結束 === */
   </style>
 </head>
 <body>
-
+<!-- === 登入畫面結構開始 === -->
+    <div id="login-overlay">
+      <div class="login-box">
+        <h2>系統登入</h2>
+        <input type="text" id="login-username" placeholder="登入帳號">
+        <input type="password" id="login-password" placeholder="密碼" onkeypress="handleLoginKeyPress(event)">
+        <button onclick="checkLogin()">登入</button>
+        <div id="login-error" class="login-error">帳號或密碼錯誤！</div>
+      </div>
+    </div>
+    <!-- === 登入畫面結構結束 === -->
   <div class="header-bar">
       <button id="backBtn" class="back-btn" onclick="showMainMenu()">🔙 返回主選單</button>
       <h2 class="main-title">📦 物資總管系統</h2>
@@ -2271,6 +2304,30 @@ window.onload = () => {
           </div>
       </div>
   </div>
+<!-- === 登入驗證腳本開始 === -->
+    <script>
+      function checkLogin() {
+        const user = document.getElementById('login-username').value;
+        const pass = document.getElementById('login-password').value;
+        
+        // 檢查帳號密碼是否相符
+        if (user === 'IDSS' && pass === '22080030') {
+          // 登入成功：隱藏登入層，顯示系統
+          document.getElementById('login-overlay').style.display = 'none';
+          document.getElementById('login-error').style.display = 'none';
+        } else {
+          // 登入失敗：顯示錯誤提示
+          document.getElementById('login-error').style.display = 'block';
+        }
+      }
 
+      // 支援按 Enter 鍵直接登入
+      function handleLoginKeyPress(e) {
+        if (e.key === 'Enter') {
+          checkLogin();
+        }
+      }
+    </script>
+    <!-- === 登入驗證腳本結束 === -->
 </body>
 </html>  
