@@ -6,20 +6,16 @@
 
 <!-- ========== 替換開始：動態背景與左至右 UI 排版 ========== -->
   <style>
-    body {
-      /* 修改一：未登入前的背景 (圖2) - 請在此處填入你實際的圖2檔名 */
-      background-image: url('./ict-big-banner.jpg');
-      background-size: cover;
-      background-position: center;
-      background-repeat: no-repeat;
-      background-attachment: fixed;
-      transition: background-image 0.5s ease-in-out;
+body {
+      background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-    /* 修改一：登入後的主頁 (圖1) - 移除背景圖片，改為乾淨底色 */
-    body.logged-in {
-      background-image: none;
-      background-color: #f4f7f6;
+    /* 將背景圖片專門強制加在登入畫面 */
+    #loginModal {
+      background-image: url('./ict-big-banner.jpg') !important;
+      background-size: cover !important;
+      background-position: center !important;
+      background-repeat: no-repeat !important;
     }
 
     #mainMenu {
@@ -36,8 +32,8 @@
     #mainMenu button,
     .menu-box {
         /* 修改一：取消自動拉伸，改為固定長寬，確保全部方塊大細一致 */
-        width: 250px;
-        height: 150px;
+        width: 300px;
+        height: 330px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -150,10 +146,14 @@
     }
 
 // --- 視圖切換與登入控制 ---
-    window.showMainMenu = function() {
+window.showMainMenu = function() {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+        
         let menu = document.getElementById('mainMenu');
-        if (menu) menu.classList.add('active');
+        if (menu) {
+            menu.classList.add('active');
+            menu.style.display = 'flex'; // 【修改重點】：返回主頁時，確保重新顯示 6 個方塊
+        }
         
         let btn = document.getElementById('backBtn');
         if (btn) btn.style.display = 'none';
@@ -161,12 +161,17 @@
         let title = document.querySelector('.main-title');
         if (title) title.style.display = 'block';
 
-        window.scrollTo(0, 0); // 修改三：確保返回主頁時畫面滑動到最上方
+        window.scrollTo(0, 0); 
     }
 
     window.showView = function(viewId) {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
         
+        let menu = document.getElementById('mainMenu');
+        if (menu) {
+            menu.style.display = 'none'; // 【修改重點】：進入方塊後，隱藏主選單，這樣介面內容就會自動置頂
+        }
+
         let view = document.getElementById(viewId);
         if (view) view.classList.add('active');
         
@@ -181,7 +186,7 @@
         if(viewId === 'view-master') renderMasterList();
         if(viewId === 'view-query') filterHistory(); 
 
-        window.scrollTo(0, 0); // 修改三：確保點擊進入任何方塊後，內容顯示在最上方
+        window.scrollTo(0, 0); 
     }
 
     window.openLoginModal = function() {
@@ -195,15 +200,12 @@
     }
 
 /* ========== 替換開始：加入登入成功換圖機制 ========== */
-    window.verifyAdmin = function() {
+window.verifyAdmin = function() {
         const user = document.getElementById('adminUser').value;
         const pwd = document.getElementById('adminPwd').value;
         if(user === 'tszfung' && pwd === '22080030') {
             closeLoginModal();
-            showView('view-admin');
-            
-            // 新增此行：登入成功後，為 body 加上 logged-in 標籤以觸發圖2背景
-            document.body.classList.add('logged-in'); 
+            showMainMenu(); // 【修改重點】：登入後直接呼叫主選單顯示 6 個方塊
         } else {
             alert('❌ 帳戶名稱或密碼錯誤！');
         }
