@@ -7,38 +7,42 @@
 <!-- ========== 替換開始：動態背景與左至右 UI 排版 ========== -->
   <style>
     body {
-      /* 登入畫面預設背景 (圖1) */
-      background-image: url('ict-big-banner.jpg');
+      /* 修改一：未登入前的背景 (圖2) - 請在此處填入你實際的圖2檔名 */
+      background-image: url('./ict-big-banner.jpg');
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
       background-attachment: fixed;
-      transition: background-image 0.5s ease-in-out; /* 切換背景時的平滑過場動畫 */
+      transition: background-image 0.5s ease-in-out;
     }
 
-    /* 登入後的背景 (圖2) - 請將 url 內的檔名換成你 GitHub 上的圖2檔名 */
+    /* 修改一：登入後的主頁 (圖1) - 移除背景圖片，改為乾淨底色 */
     body.logged-in {
-      background-image: url('./YOUR_IMAGE_2_FILENAME.png'); 
+      background-image: none;
+      background-color: #f4f7f6;
     }
 
-    /* 讓主選單方塊由左至右動態排列 (圖4) */
     #mainMenu {
         display: flex;
         flex-direction: row;
         flex-wrap: wrap;
-        justify-content: center; /* 方塊置中對齊 */
+        justify-content: center;
         align-items: stretch;
-        gap: 20px; /* 方塊之間的空隙 */
+        gap: 20px;
         padding: 20px;
     }
 
-    /* 主選單內的各個方塊樣式設定 */
     #mainMenu > div, 
     #mainMenu button,
     .menu-box {
-        flex: 1; /* 讓方塊平均分配空間 */
-        min-width: 200px; /* 方塊最小寬度，防止縮太小 */
-        max-width: 300px; /* 方塊最大寬度 */
+        /* 修改一：取消自動拉伸，改為固定長寬，確保全部方塊大細一致 */
+        width: 250px;
+        height: 150px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        box-sizing: border-box;
         transition: all 0.3s ease-in-out;
     }
   </style>
@@ -46,13 +50,15 @@
   
   <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
   <style>
-    /* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
+/* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
     .view-section {
+        display: none; /* 修改二：隱藏未啟用的內容，防止佔用空間將畫面往下推 */
         opacity: 0;
         transform: translateY(15px);
         transition: opacity 0.4s ease, transform 0.4s ease;
     }
     .view-section.active {
+        display: block; /* 修改二：點擊進入後才顯示，確保內容維持在最上方 */
         opacity: 1;
         transform: translateY(0);
     }
@@ -154,6 +160,8 @@
         
         let title = document.querySelector('.main-title');
         if (title) title.style.display = 'block';
+
+        window.scrollTo(0, 0); // 修改三：確保返回主頁時畫面滑動到最上方
     }
 
     window.showView = function(viewId) {
@@ -172,6 +180,8 @@
         if(viewId === 'view-expiry') renderExpiryTable();
         if(viewId === 'view-master') renderMasterList();
         if(viewId === 'view-query') filterHistory(); 
+
+        window.scrollTo(0, 0); // 修改三：確保點擊進入任何方塊後，內容顯示在最上方
     }
 
     window.openLoginModal = function() {
