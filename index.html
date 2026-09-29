@@ -10,12 +10,17 @@ body {
       background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-    /* 將背景圖片專門強制加在登入畫面 */
-    #loginModal {
+/* 修正：移除管理員登入 (loginModal) 的背景，改將背景加在最初的系統登入畫面 */
+    #systemLogin { /* 請確保這裡的 ID 與你「系統登入」的 div ID 一致，例如 #loginScreen 或 #systemLoginModal */
       background-image: url('ict-big-banner.jpg') !important;
       background-size: cover !important;
       background-position: center !important;
       background-repeat: no-repeat !important;
+    }
+    
+    /* 確保管理員登入視窗維持乾淨底色 */
+    #loginModal {
+      background: white !important;
     }
 
     #mainMenu {
@@ -1970,7 +1975,7 @@ window.onload = () => {
         --color-red: #e74c3c; --color-red-dark: #c0392b;
         --color-orange: #f39c12; --color-orange-dark: #d35400;
         --color-green: #2ecc71; --color-green-dark: #27ae60;
-        --color-dark: #34495e; --color-dark-dark: #2c3e50;
+--color-pink: #ffb6c1; --color-pink-dark: #ff69b4;    
     }
 
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
