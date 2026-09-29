@@ -14,87 +14,35 @@
       background-repeat: no-repeat;
       background-attachment: fixed;
       transition: background-image 0.5s ease-in-out; /* 切換背景時的平滑過場動畫 */
-      margin: 0;
-      padding: 10px;
     }
 
-    /* 登入後的背景 (圖2) */
+    /* 登入後的背景 (圖2) - 請將 url 內的檔名換成你 GitHub 上的圖2檔名 */
     body.logged-in {
       background-image: url('./YOUR_IMAGE_2_FILENAME.png'); 
     }
 
-    /* 讓主選單方塊由左至右動態排列 */
+    /* 讓主選單方塊由左至右動態排列 (圖4) */
     #mainMenu {
         display: flex;
         flex-direction: row;
         flex-wrap: wrap;
         justify-content: center; /* 方塊置中對齊 */
-        align-items: center;
+        align-items: stretch;
         gap: 20px; /* 方塊之間的空隙 */
-        padding: 10px;
+        padding: 20px;
     }
 
-    /* 1. 所有主選單方塊大細一致 */
+    /* 主選單內的各個方塊樣式設定 */
     #mainMenu > div, 
     #mainMenu button,
     .menu-box {
-        width: 220px !important;      /* 固定寬度 */
-        height: 120px !important;     /* 固定高度 */
-        flex: 0 0 220px !important;   /* 鎖定大小，防止被縮放拉伸 */
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        box-sizing: border-box;
+        flex: 1; /* 讓方塊平均分配空間 */
+        min-width: 200px; /* 方塊最小寬度，防止縮太小 */
+        max-width: 300px; /* 方塊最大寬度 */
         transition: all 0.3s ease-in-out;
     }
-
-    /* 2. 管理員設定方塊：改用質感深藍灰色 (#34495e)，不使用黑色 */
-    .admin-box, 
-    #btn-admin, 
-    button[onclick*="openLoginModal"] {
-        background-color: #34495e !important;
-        color: #ffffff !important;
-        border: none !important;
-    }
-
-    /* 3. 管理員登入彈窗（位置修正為畫面正中央） */
-    #loginModal {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        background: rgba(0, 0, 0, 0.5) !important;
-        display: none;
-        justify-content: center !important; /* 水平置中 */
-        align-items: center !important;     /* 垂直置中 */
-        z-index: 10000 !important;
-    }
-
-    /* 4. 進入頁面後內容往上移（消除位移與頂部空隙） */
-    .view-section {
-        display: none;              /* 未選取時隱藏，避免佔據下方空間 */
-        opacity: 0;
-        margin-top: -10px;          /* 將內容向上提升 */
-        padding-top: 0px;           /* 移除頂部留白 */
-        transition: opacity 0.3s ease;
-    }
-
-    .view-section.active {
-        display: block !important;  /* 進入方塊後顯示 */
-        opacity: 1;
-    }
-
-    /* 方塊懸停 (Hover) 浮動效果 */
-    #mainMenu > div:hover, 
-    #mainMenu button:hover,
-    .menu-box:hover {
-        transform: translateY(-5px) scale(1.02);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-    }
   </style>
-  <!-- ========== 替換結束（動畫區塊） ========== -->
+  <!-- ========== 替換結束 ========== -->
   
   <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
   <style>
