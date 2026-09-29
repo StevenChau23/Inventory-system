@@ -10,12 +10,16 @@ body {
       background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-/* 修正：移除管理員登入 (loginModal) 的背景，改將背景加在最初的系統登入畫面 */
-    #systemLogin { /* 請確保這裡的 ID 與你「系統登入」的 div ID 一致，例如 #loginScreen 或 #systemLoginModal */
-      background-image: url('./ict-big-banner.jpg') !important;
-      background-size: cover !important;
-      background-position: center !important;
-      background-repeat: no-repeat !important;
+/* 1. 將最初系統登入背景改為淡藍色 */
+    #systemLogin { 
+      background: #e3f2fd !important; /* 柔和淡藍色 */
+      background-image: none !important;
+    }
+
+/* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
+    .admin-box, #adminBox, [onclick*="openLoginModal"], [onclick*="view-admin"] {
+      background-color: #f8bbd0 !important; /* 淡粉紅色背景 */
+      color: #880e4f !important; /* 深粉紅字體 */
     }
     
 /* 修正：將管理員登入視窗置中，並加入半透明背景遮罩 */
@@ -226,18 +230,19 @@ window.showMainMenu = function() {
         document.getElementById('adminPwd').value = '';
     }
 
-/* ========== 替換開始：加入登入成功換圖機制 ========== */
+/* ========== 替換開始：登入成功後進入管理員設定頁面 ========== */
 window.verifyAdmin = function() {
         const user = document.getElementById('adminUser').value;
         const pwd = document.getElementById('adminPwd').value;
         if(user === 'tszfung' && pwd === '22080030') {
             closeLoginModal();
             
-            // 【修正重點】：登入成功後確保關閉系統登入大圖背景，順利顯示主頁 6 個方塊
+            // 登入成功後隱藏最初的登入畫面
             let sysLogin = document.getElementById('systemLogin');
             if (sysLogin) sysLogin.style.display = 'none';
             
-            showMainMenu();
+            // 【修復關鍵】：將原本的 showMainMenu() 改為 showView('view-admin')，直接打開管理員設定頁面與功能
+            showView('view-admin');
         } else {
             alert('❌ 帳戶名稱或密碼錯誤！');
         }
