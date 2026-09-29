@@ -4,15 +4,45 @@
   <meta charset="UTF-8">
   <title>Stock Take & Purchase 系統</title>
 
+<!-- ========== 替換開始：動態背景與左至右 UI 排版 ========== -->
   <style>
     body {
-      /* 必須精準填入你上傳的圖片檔名 */
+      /* 登入畫面預設背景 (圖1) */
       background-image: url('./KMwNT3jqkSHkclkp.png');
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
+      background-attachment: fixed;
+      transition: background-image 0.5s ease-in-out; /* 切換背景時的平滑過場動畫 */
+    }
+
+    /* 登入後的背景 (圖2) - 請將 url 內的檔名換成你 GitHub 上的圖2檔名 */
+    body.logged-in {
+      background-image: url('./YOUR_IMAGE_2_FILENAME.png'); 
+    }
+
+    /* 讓主選單方塊由左至右動態排列 (圖4) */
+    #mainMenu {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center; /* 方塊置中對齊 */
+        align-items: stretch;
+        gap: 20px; /* 方塊之間的空隙 */
+        padding: 20px;
+    }
+
+    /* 主選單內的各個方塊樣式設定 */
+    #mainMenu > div, 
+    #mainMenu button,
+    .menu-box {
+        flex: 1; /* 讓方塊平均分配空間 */
+        min-width: 200px; /* 方塊最小寬度，防止縮太小 */
+        max-width: 300px; /* 方塊最大寬度 */
+        transition: all 0.3s ease-in-out;
     }
   </style>
+  <!-- ========== 替換結束 ========== -->
   
   <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
   <style>
@@ -154,16 +184,21 @@
         document.getElementById('adminPwd').value = '';
     }
 
+/* ========== 替換開始：加入登入成功換圖機制 ========== */
     window.verifyAdmin = function() {
         const user = document.getElementById('adminUser').value;
         const pwd = document.getElementById('adminPwd').value;
         if(user === 'tszfung' && pwd === '22080030') {
             closeLoginModal();
             showView('view-admin');
+            
+            // 新增此行：登入成功後，為 body 加上 logged-in 標籤以觸發圖2背景
+            document.body.classList.add('logged-in'); 
         } else {
             alert('❌ 帳戶名稱或密碼錯誤！');
         }
     }
+    /* ========== 替換結束 ========== */
 
     // --- Drape / Consumable 數據切換 ---
     window.setQueryCategory = function(cat) {
