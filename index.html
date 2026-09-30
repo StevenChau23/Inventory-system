@@ -1325,15 +1325,54 @@ let rowData = { catNo, desc, haCode, currentBal, cells, uomVal, isExcelOpenBalEm
       });
     }
 
-    window.loadStockData = async function() {
+window.loadStockData = async function() {
       const querySnapshot = await getDocs(query(collection(db, "transactions"), orderBy("timestamp", "desc")));
       transactionsData = []; 
       querySnapshot.forEach((docSnap) => { const data = docSnap.data(); data.id = docSnap.id; transactionsData.push(data); });
       renderYearButtons(); filterHistory(); 
-let viewExpiry = document.getElementById('view-expiry');
-if (viewExpiry && viewExpiry.classList.contains('active')) renderExpiryTable();
-}
+      let viewExpiry = document.getElementById('view-expiry');
+      if (viewExpiry && viewExpiry.classList.contains('active')) renderExpiryTable();
+      
+      // 觸發主頁面過期警報更新
+      updateMainMenuExpiryAlert();
+    }
 
+    window.updateMainMenuExpiryAlert = function() {
+        let today = new Date(); today.setHours(0,0,0,0);
+        let redCount = 0;
+        let darkOrangeCount = 0;
+        
+        let expiryData = transactionsData.filter(t => t.expiryDate && t.expiryDate.trim() !== "");
+        expiryData.forEach(t => {
+            let expDate = new Date(t.expiryDate); expDate.setHours(0,0,0,0);
+            let diffDays = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
+            if (diffDays <= 60) {
+                redCount++; // 過期或2個月內 (紅色)
+            } else if (diffDays <= 90) {
+                darkOrangeCount++; // 3個月內 (深橙色)
+            }
+        });
+        
+        let alertContainer = document.getElementById('mainMenuExpiryAlert');
+        if (!alertContainer) {
+            alertContainer = document.createElement('div');
+            alertContainer.id = 'mainMenuExpiryAlert';
+            alertContainer.style.cssText = "width: 100%; text-align: center; margin-bottom: 20px;";
+            // 插入至主選單最上方
+            let menu = document.getElementById('mainMenu');
+            if (menu) menu.insertBefore(alertContainer, menu.firstChild);
+        }
+        
+        let html = "";
+        if (redCount > 0) {
+            html += `<div style="background-color: #fadbd8; color: #c0392b; padding: 10px; margin: 5px; border-radius: 5px; font-weight: bold; display: inline-block; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="showView('view-expiry')">🚨 警告：有 ${redCount} 項物品已過期或將於 2 個月內過期！</div>`;
+        }
+        if (darkOrangeCount > 0) {
+            html += `<div style="background-color: #fdebd0; color: #e65100; padding: 10px; margin: 5px; border-radius: 5px; font-weight: bold; display: inline-block; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="showView('view-expiry')">⚠️ 注意：有 ${darkOrangeCount} 項物品將於 3 個月內過期！</div>`;
+        }
+        alertContainer.innerHTML = html;
+    }
+    
     window.setFinancialYear = function(startYear) { document.getElementById('startDate').value = `${startYear}-04-01`; document.getElementById('endDate').value = `${startYear + 1}-03-31`; filterHistory(); }
     
     window.clearDateRange = function() { 
@@ -1632,10 +1671,10 @@ if (diffDays < 0) {
             dateStyle = "color:#c0392b; font-weight:bold;"; // 紅色
             alarmText = "<br><span style='font-size:0.8rem;'>🚨 2個月內</span>";
             bgStyle = "background-color: #fadbd8;";
-        } else if (diffDays <= 90) {
-            dateStyle = "color:#d35400; font-weight:bold;"; // 橙色
+} else if (diffDays <= 90) {
+            dateStyle = "color:#e65100; font-weight:bold;"; // 深橙色
             alarmText = "<br><span style='font-size:0.8rem;'>⚠️ 3個月內</span>";
-            bgStyle = "background-color: #fcf3cf;";
+            bgStyle = "background-color: #fdebd0;";
         } else if (diffDays <= 180) { // 新增：介於 3個月 (90天) 到 6個月 (180天) 為黃色
             dateStyle = "color:#d68910; font-weight:bold;"; // 較深的黃色確保白底上能看清
             alarmText = "<br><span style='font-size:0.8rem;'>🟡 6個月內</span>";
@@ -1752,12 +1791,16 @@ if (diffDays < 0) {
         if (thead && !thead.dataset.patched) {
             thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
             
-            // 動態插入 Location 標題在最後一個欄位(操作)之前
+// 動態插入 Location 及 Remark 標題在最後一個欄位(操作)之前
             let ths = thead.querySelectorAll('th');
             if(ths.length > 0) {
-                let newTh = document.createElement('th');
-                newTh.innerText = 'Location';
-                thead.insertBefore(newTh, ths[ths.length - 1]);
+                let locTh = document.createElement('th');
+                locTh.innerText = 'Location';
+                thead.insertBefore(locTh, ths[ths.length - 1]);
+
+                let remTh = document.createElement('th');
+                remTh.innerText = 'Remark';
+                thead.insertBefore(remTh, ths[ths.length - 1]);
             }
             thead.dataset.patched = "true";
         }
@@ -1768,7 +1811,7 @@ if (diffDays < 0) {
         masterItemsData.forEach(m => {
             let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
             // 抓取 location 數據
-            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', location: m.location || '', category: m.category || 'Master', isMaster: true });
+            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', remark: m.remark || '', location: m.location || '', category: m.category || 'Master', isMaster: true });
         });
 
         transactionsData.forEach(t => {
@@ -1849,6 +1892,7 @@ if (diffDays < 0) {
             <td><input type="text" id="edit-m-code-${id}" value="${item.code === 'NA' ? '' : item.code}" class="inline-edit"></td>
             <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 60px;"></td>
             <td><input type="text" id="edit-m-loc-${id}" value="${item.location || ''}" class="inline-edit" list="locationList" style="width: 70px;" placeholder="LG01"></td>
+            <td><input type="text" onchange="updateMasterRemark('${item.id}', this.value)" value="${item.remark || ''}" style="width: 90%; border: 1px solid #ccc; border-radius: 3px; padding: 4px;"></td>
             <td>
                 <button class="action-btn save-btn" onclick="saveMasterItem('${id}')">💾</button>
                 <button class="action-btn cancel-btn" onclick="renderMasterList()">取消</button>
@@ -2528,6 +2572,12 @@ window.onload = () => {
           checkLogin();
         }
       }
+      window.updateMasterRemark = async function(id, newRemark) {
+        if(!id || id === 'undefined') return;
+        try {
+            await updateDoc(doc(db, "master_items", id), { remark: newRemark });
+        } catch(e) { console.error("備註更新失敗", e); }
+    }
     </script>
     <!-- === 登入驗證腳本結束 === -->
 </body>
