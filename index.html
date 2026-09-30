@@ -1428,13 +1428,28 @@ if (searchText !== "") {
       finalDisplayData = finalDisplayData.reverse(); 
       window.currentQueryData = finalDisplayData; 
 
-      let balanceHtml = "";
+let balanceHtml = "";
       if (searchText !== "") {
         let balanceColor = currentBal < 0 ? "#e74c3c" : "#27ae60";
         let dateText = startDate && endDate ? `${startDate} 至 ${endDate}` : startDate ? `${startDate} 至今` : endDate ? `截至 ${endDate}` : "所有紀錄時間";
+        
+        // 新增：動態抓取該物品的 UOM
+        let itemUOM = "未設定";
+        if (finalDisplayData.length > 0 && finalDisplayData[0].uom && finalDisplayData[0].uom !== "-" && finalDisplayData[0].uom !== "NA") {
+            itemUOM = finalDisplayData[0].uom;
+        } else {
+            let searchLower = searchText.toLowerCase().trim();
+            for (let m of masterItemsData) {
+                if ( ((m.code || "").toLowerCase().includes(searchLower) || (m.catNo || "").toLowerCase().includes(searchLower) || (m.desc || "").toLowerCase().includes(searchLower)) && m.uom && m.uom !== "-" && m.uom !== "NA" ) {
+                    itemUOM = m.uom;
+                    break;
+                }
+            }
+        }
+
         balanceHtml = `📦 物品 <strong>"${searchText}"</strong> 的統計：<br>
                        <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 6px;">
-                         📅 期間 (${dateText}) ➜ 期初結餘(Opening): <b>${totalOpening}</b> | 期間入庫(In): <b>${totalIn}</b> | 期間出庫(Out): <b>${totalOut}</b>
+                         📅 期間 (${dateText}) ➜ 期初結餘(Opening): <b>${totalOpening}</b> | 期間入庫(In): <b>${totalIn}</b> | 期間出庫(Out): <b>${totalOut}</b> | 單位(UOM): <b style="color:#2980b9;">${itemUOM}</b>
                        </div>
                        <span style="font-size: 1.2rem; margin-top:10px; display:inline-block;">期末系統結餘 (Latest Balance): <strong style="color:${balanceColor}; font-size: 1.6rem;">${currentBal}</strong></span>`;
       }
@@ -1480,9 +1495,10 @@ if (searchText !== "") {
         link.click();
     };
 
-    window.renderHistoryTable = function(data) {
+window.renderHistoryTable = function(data) {
       const tbody = document.getElementById('historyTbody'); tbody.innerHTML = "";
-      if (data.length === 0) { tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>尚未有任何紀錄或查無資料</td></tr>"; return; }
+      // 修正：因為多加了一個 UOM 欄位，所以 colspan 改為 11
+      if (data.length === 0) { tbody.innerHTML = "<tr><td colspan='11' style='text-align:center;'>尚未有任何紀錄或查無資料</td></tr>"; return; }
       
       data.forEach(t => {
         let tr = document.createElement('tr'); tr.id = `row-${t.id}`;
@@ -1491,6 +1507,21 @@ if (searchText !== "") {
         let balDisplay = t.runningBalance !== undefined ? t.runningBalance : "-";
         
         let { mCat, mDesc, mCode } = extractItemDetails(t);
+        
+        // 新增：比對與抓取該紀錄的 UOM
+        let currentUOM = t.uom && t.uom !== "-" && t.uom !== "NA" ? t.uom : "";
+        if(!currentUOM) {
+            let foundMaster = masterItemsData.find(m => {
+                let mc = (m.code || "").toLowerCase().replace(/[-_\s()]/g, '');
+                let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                let searchCode = mCode.toLowerCase().replace(/[-_\s()]/g, '');
+                let searchDesc = mDesc.toLowerCase().replace(/[-_\s()]/g, '');
+                return (searchCode && mc === searchCode) || (searchDesc && md === searchDesc);
+            });
+            if(foundMaster && foundMaster.uom) currentUOM = foundMaster.uom;
+        }
+        let displayUOM = currentUOM || "-";
+
         mCode = mCode.replace(/\n/g, '<br>'); mCat = mCat.replace(/\n/g, '<br>'); mDesc = mDesc.replace(/\n/g, '<br>');
         
         let extraInfo = []; if(t.packSize) extraInfo.push(`Pack: ${t.packSize}`); if(t.lotNo) extraInfo.push(`Lot: ${t.lotNo}`); if(t.poNo) extraInfo.push(`PO: ${t.poNo}`); if(t.expiryDate) extraInfo.push(`Exp: ${t.expiryDate}`);
@@ -1498,6 +1529,7 @@ if (searchText !== "") {
         tr.innerHTML = `
           <td>${t.date}</td><td><strong>${mCat || '-'}</strong></td><td title="資料庫原始數據: ${t.item}">${mDesc || '-'}</td>
           <td>${mCode}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td>${t.qty}</td>
+          <td style="color: #2980b9; font-weight: bold;">${displayUOM}</td>
           <td style="font-size: 0.85rem; color: #555;">${extraInfo.length > 0 ? extraInfo.join('<br>') : '<span style="color:#ccc;">-</span>'}</td>
           <td style="font-weight: bold; background-color: #fdfad5;">${balDisplay}</td><td style="${remarkStyle}">${remarkText}</td>
           <td><button class="action-btn edit-btn" onclick="editRecord('${t.id}')">✏️</button><button class="action-btn del-btn" onclick="deleteRecord('${t.id}')">❌</button></td>
@@ -1592,18 +1624,26 @@ if (searchText !== "") {
         let alarmText = "";
         let bgStyle = "";
 
-        if (diffDays < 0) {
-            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+if (diffDays < 0) {
+            dateStyle = "color:#c0392b; font-weight:bold;"; // 紅色
             alarmText = "<br><span style='font-size:0.8rem;'>已過期</span>";
             bgStyle = "background-color: #fadbd8;";
         } else if (diffDays <= 60) {
-            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+            dateStyle = "color:#c0392b; font-weight:bold;"; // 紅色
             alarmText = "<br><span style='font-size:0.8rem;'>🚨 2個月內</span>";
             bgStyle = "background-color: #fadbd8;";
         } else if (diffDays <= 90) {
-            dateStyle = "color:#d35400; font-weight:bold;"; // Orange
+            dateStyle = "color:#d35400; font-weight:bold;"; // 橙色
             alarmText = "<br><span style='font-size:0.8rem;'>⚠️ 3個月內</span>";
             bgStyle = "background-color: #fcf3cf;";
+        } else if (diffDays <= 180) { // 新增：介於 3個月 (90天) 到 6個月 (180天) 為黃色
+            dateStyle = "color:#d68910; font-weight:bold;"; // 較深的黃色確保白底上能看清
+            alarmText = "<br><span style='font-size:0.8rem;'>🟡 6個月內</span>";
+            bgStyle = "background-color: #fef9e7;";
+        } else { // 新增：6個月以上顯示為綠色
+            dateStyle = "color:#27ae60; font-weight:bold;"; // 綠色
+            alarmText = "<br><span style='font-size:0.8rem;'>✅ 6個月以上</span>";
+            bgStyle = "background-color: #eafaf1;";
         }
 
         let typeColor = t.type === "In" ? "#27ae60" : t.type === "Out" ? "#e74c3c" : "#8e44ad";
@@ -2148,7 +2188,7 @@ window.onload = () => {
     <!-- === 登入畫面結構結束 === -->
   <div class="header-bar">
       <button id="backBtn" class="back-btn" onclick="showMainMenu()">🔙 返回主選單</button>
-      <h2 class="main-title">📦 Inventory System</h2>
+      <h2 class="main-title">📦 IDSS Inventory Management System</h2>
   </div>
 
   <div id="mainMenu" class="main-menu view-section active">
