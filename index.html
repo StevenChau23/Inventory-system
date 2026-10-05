@@ -1832,35 +1832,33 @@ if (diffDays < 0) {
         if(searchText) displayData = displayData.filter(d => d.cat.toLowerCase().includes(searchText) || d.desc.toLowerCase().includes(searchText) || d.code.toLowerCase().includes(searchText));
         if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='8' style='text-align:center;'>無相符資料</td></tr>"; return; }
 
-        displayData.forEach(d => {
+// ========== 替換開始：修復 Remark 欄位與操作按鈕的位置 ==========
+
+        displayData.forEach(item => {
             let tr = document.createElement('tr');
-            let rowId = d.id || d.key.replace(/[^a-zA-Z0-9]/g, '');
-            tr.id = `master-row-${rowId}`;
-            let catStyle = d.category === 'Drape' ? 'background:#34495e;color:white;padding:3px 8px;border-radius:4px;' : 
-                           d.category === 'Consumable' ? 'background:#bdc3c7;color:#2c3e50;padding:3px 8px;border-radius:4px;' : 
-                           'background:#f39c12;color:white;padding:3px 8px;border-radius:4px;';
             
-            let actionHtml = '';
-            if (d.isMaster) {
-                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button> <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
-            } else {
-                actionHtml = `<button class="action-btn" style="background:#3498db;" onclick="addMissingToMaster('${d.cat.replace(/'/g, "\\'")}', '${d.desc.replace(/'/g, "\\'")}', '${d.code.replace(/'/g, "\\'")}', '${d.uom.replace(/'/g, "\\'")}')">➕ 加入總表</button>`;
-            }
-
-            let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
-
-            // 新增 d.location 在畫面上
-            tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
-                            <td><span style="${catStyle}">${d.category}</span></td>
-                            <td style="font-weight:bold;">${d.cat}</td>
-                            <td>${d.desc}</td>
-                            <td>${d.code}</td>
-                            <td>${d.uom}</td>
-                            <td style="font-weight:bold; color:#2980b9;">${d.location}</td>
-                            <td>${actionHtml}</td>`;
+            // 【修復重點】：將 Remark 獨立成一個 <td>，並將 Edit 和 Delete 兩個按鈕獨立放進最後一個 <td> 中
+            tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="master-checkbox" data-id="${item.id || ''}" data-key="${item.key || ''}" data-ismaster="${item.isMaster}" data-cat="${item.cat}" data-desc="${item.desc}" data-code="${item.code}">
+                </td>
+                <td>${item.cat}</td>
+                <td>${item.desc}</td>
+                <td>${item.code}</td>
+                <td>${item.uom}</td>
+                <td>${item.location}</td>
+                <td>${item.remark || ''}</td> <!-- 獨立的 Remark 欄位 -->
+                
+                <!-- 獨立的操作欄位，放置 Edit 和 Delete -->
+                <td style="white-space: nowrap;"> 
+                    <button class="action-btn edit-btn" onclick="editMasterItem('${item.id}')">✏️</button>
+                    <button class="action-btn del-btn" onclick="deleteMasterItem('${item.id}')">❌</button>
+                </td>
+            `;
             tbody.appendChild(tr);
         });
-    };
+
+// ========== 替換結束 ==========
 
     window.addNewMasterItem = async function() {
         let catNo = document.getElementById('newMasterCatNo').value.trim();
@@ -2732,6 +2730,9 @@ window.onload = () => {
         }
         document.body.style.cursor = 'default';
     }
+      <button onclick="downloadDatabaseBackup()">下載資料庫備份檔</button>
+      <button onclick="deleteUploadedData()">選擇要刪除的上載數據</button>
+       }   
     </script>
     <!-- === 登入驗證腳本結束 === -->
 </body>
