@@ -2544,6 +2544,19 @@ window.onload = () => {
 <button class="btn-primary" style="background-color: #e67e22; margin-bottom: 15px;" onclick="fixSystemBalances()">
     🛠️ 修正系統結餘運算問題 (重新校準 IN/OUT 結餘)
 </button>
+                    <div style="margin-top:20px; border-top: 2px solid #ccc; padding-top:20px;">
+          <h3 style="color:#2c3e50;">💾 資料庫備份與復原</h3>
+          <p style="font-size:0.9rem; color:#555;">為避免誤刪資料，建議定期下載備份。</p>
+          <button class="action-btn" style="background:#2980b9;" onclick="backupData()">📥 下載資料庫備份檔</button>
+          <input type="file" id="restoreFile" style="display:none" accept=".json" onchange="restoreData(event)">
+          <button class="action-btn" style="background:#8e44ad;" onclick="document.getElementById('restoreFile').click()">📤 從備份檔復原資料</button>
+      </div>
+
+      <div style="margin-top:20px; border-top: 2px solid #ccc; padding-top:20px;">
+          <h3 style="color:#2c3e50;">🗑️ 選擇性刪除資料 (重新上載專用)</h3>
+          <p style="font-size:0.9rem; color:#555;">可依照「年度 + 分類」個別刪除該批次的所有資料，方便修正錯誤重新上載 Excel。</p>
+          <button class="action-btn" style="background:#d35400;" onclick="showSpecificDeleteModal()">🔍 選擇要刪除的上載數據</button>
+      </div>
                   </div>
               </div>
           </div>
@@ -2577,6 +2590,147 @@ window.onload = () => {
         try {
             await updateDoc(doc(db, "master_items", id), { remark: newRemark });
         } catch(e) { console.error("備註更新失敗", e); }
+    }
+      // === 資料備份 ===
+    window.backupData = function() {
+        const backup = { masterItems: masterItemsData, transactions: transactionsData };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", `System_Backup_${new Date().toISOString().slice(0,10)}.json`);
+        dlAnchorElem.click();
+    }
+
+    // === 資料復原 ===
+    window.restoreData = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!confirm("⚠️ 警告：復原資料將會【刪除覆蓋】當前系統所有資料，請確定你上傳的是正確的備份檔！確定繼續？")) return;
+                
+                document.body.style.cursor = 'wait';
+                const loadingDiv = document.createElement('div');
+                loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#8e44ad; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+                loadingDiv.innerText = "⏳ 正在復原資料，請勿關閉視窗..."; document.body.appendChild(loadingDiv);
+
+                // 1. 清空當前資料庫
+                const txSnap = await getDocs(collection(db, "transactions"));
+                for (let d of txSnap.docs) await deleteDoc(doc(db, "transactions", d.id));
+                const masterSnap = await getDocs(collection(db, "master_items"));
+                for (let d of masterSnap.docs) await deleteDoc(doc(db, "master_items", d.id));
+                
+                // 2. 寫入備份檔資料
+                if(data.masterItems) {
+                    for (let m of data.masterItems) {
+                        let mData = {...m}; delete mData.id;
+                        await addDoc(collection(db, "master_items"), mData);
+                    }
+                }
+                if(data.transactions) {
+                    for (let t of data.transactions) {
+                        let tData = {...t}; delete tData.id;
+                        if(tData.timestamp) tData.timestamp = new Date(tData.date + "T12:00:00"); // 重建排序用的時間戳
+                        await addDoc(collection(db, "transactions"), tData);
+                    }
+                }
+                document.body.removeChild(loadingDiv);
+                alert("✅ 資料復原成功！系統將自動重新載入。");
+                await loadMasterItems(); loadStockData();
+            } catch(err) {
+                console.error(err); alert("❌ 復原失敗，檔案可能損毀或非本系統備份格式。");
+            }
+            document.body.style.cursor = 'default';
+        };
+        reader.readAsText(file);
+        event.target.value = ''; 
+    }
+
+    // === 選擇性刪除 Excel 數據 (按年度及分類) ===
+    window.showSpecificDeleteModal = function() {
+        let groups = new Set();
+        transactionsData.forEach(t => {
+            if (t.date) {
+                const parts = t.date.split('-');
+                if (parts.length >= 2) {
+                    const y = parseInt(parts[0], 10); 
+                    const m = parseInt(parts[1], 10);
+                    if (!isNaN(y) && !isNaN(m)) { 
+                        const fyStart = m >= 4 ? y : y - 1;
+                        const cat = t.category || "Consumable";
+                        groups.add(`${fyStart}-${fyStart+1}年度 | ${cat}`);
+                    }
+                }
+            }
+        });
+        
+        let sortedGroups = Array.from(groups).sort().reverse();
+        if(sortedGroups.length === 0) { alert("目前沒有任何數據可供刪除。"); return; }
+        
+        let optionsHtml = sortedGroups.map(g => {
+            return `<div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; background:#f4f7f6; padding:12px; border-radius:5px; border:1px solid #ddd;">
+                <strong style="color:#2c3e50;">${g}</strong>
+                <button onclick="deleteSpecificGroup('${g}')" style="background:#e74c3c; color:white; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">🗑️ 刪除此批數據</button>
+            </div>`;
+        }).join('');
+        
+        const modal = document.createElement('div');
+        modal.id = 'specificDeleteModal';
+        modal.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;justify-content:center;align-items:center;";
+        modal.innerHTML = `
+            <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:550px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 5px 15px rgba(0,0,0,0.3);">
+                <h3 style="margin-top:0; color:#2c3e50;">🗑️ 選擇要刪除的上載數據</h3>
+                <p style="color:#e74c3c; font-size: 0.9em; margin-bottom:15px;">⚠️ 刪除後系統結餘將自動重新計算。請先確定這就是你想重新上載的年份及分類。</p>
+                <div style="overflow-y:auto; flex-grow:1; margin-bottom:15px;">
+                    ${optionsHtml}
+                </div>
+                <div style="text-align:right; border-top:1px solid #ccc; padding-top:15px;">
+                    <button onclick="document.body.removeChild(document.getElementById('specificDeleteModal'))" style="background:#7f8c8d;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;">關閉</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    window.deleteSpecificGroup = async function(groupString) {
+        let parts = groupString.replace('年度', '').split(' | ');
+        if(parts.length !== 2) return;
+        let targetStartYear = parseInt(parts[0].split('-')[0]);
+        let targetCategory = parts[1];
+        
+        if(!confirm(`⚠️ 確定要刪除所有【${targetStartYear}-${targetStartYear+1}年度】的【${targetCategory}】資料嗎？\n這將會清除該年度的 In, Out 及 Opening Balance！`)) return;
+        
+        if(prompt(`為了防止誤刪，請輸入 'DELETE' 以確認執行：`) !== 'DELETE') { alert("已取消刪除操作。"); return; }
+        
+        document.body.style.cursor = 'wait';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e74c3c; color:#fff; padding:12px 24px; border-radius:6px; z-index:10001; font-weight:bold;";
+        loadingDiv.innerText = `🗑️ 正在刪除 ${groupString} 的所有紀錄...`; document.body.appendChild(loadingDiv);
+        
+        let toDelete = [];
+        transactionsData.forEach(t => {
+            if (t.date && (t.category || "Consumable") === targetCategory) {
+                const dateParts = t.date.split('-');
+                const y = parseInt(dateParts[0], 10); 
+                const m = parseInt(dateParts[1], 10);
+                const fyStart = m >= 4 ? y : y - 1;
+                if (fyStart === targetStartYear) toDelete.push(t.id);
+            }
+        });
+        
+        try {
+            for (let id of toDelete) await deleteDoc(doc(db, "transactions", id));
+            document.body.removeChild(loadingDiv);
+            let modal = document.getElementById('specificDeleteModal');
+            if(modal) document.body.removeChild(modal);
+            alert(`✅ 已成功刪除 ${toDelete.length} 筆 ${groupString} 的紀錄！\n你現在可以重新上載修正後的 Excel 檔了。`);
+            loadStockData();
+        } catch(e) {
+            console.error(e); if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); alert("❌ 刪除失敗");
+        }
+        document.body.style.cursor = 'default';
     }
     </script>
     <!-- === 登入驗證腳本結束 === -->
