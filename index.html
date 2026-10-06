@@ -1796,13 +1796,13 @@ if (diffDays < 0) {
             <button onclick="setMasterCategory('Drape')" style="background:${window.currentMasterCategory === 'Drape' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Drape' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px; margin-right:5px;">Drape 類別</button>
             <button onclick="setMasterCategory('Consumable')" style="background:${window.currentMasterCategory === 'Consumable' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Consumable' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px;">Consumable 類別</button>
         `;
-`;
         
         // 若你檔案最尾端完全遺失，請務必補上這幾個閉合標籤讓程式能正常運行：
     }
   </script>
 </body>
 </html>
+
         const thead = table.querySelector('thead tr');
         if (thead && !thead.dataset.patched) {
             thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
