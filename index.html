@@ -2731,8 +2731,55 @@ window.onload = () => {
         }
         document.body.style.cursor = 'default';
     }
-      <button onclick="downloadDatabaseBackup()">下載資料庫備份檔</button>
-<button onclick="deleteUploadedData()">選擇要刪除的上載數據</button>
+// ========== 替換開始：新增備份與刪除數據的 JavaScript 功能 ==========
+
+    // 1. 下載資料庫備份檔功能
+    window.downloadDatabaseBackup = function() {
+        if (transactionsData.length === 0 && masterItemsData.length === 0) {
+            alert("目前沒有資料可供備份！"); return;
+        }
+        const backupData = {
+            transactions: transactionsData,
+            masterItems: masterItemsData,
+            exportTime: new Date().toISOString()
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "Database_Backup_" + new Date().toISOString().slice(0,10) + ".json");
+        document.body.appendChild(downloadAnchorNode); 
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    };
+
+    // 2. 選擇要刪除的上載數據功能 (以日期為條件進行批量刪除)
+    window.deleteUploadedData = async function() {
+        let delDate = prompt("請輸入要刪除上載數據的「日期」(格式 YYYY-MM-DD)：");
+        if (!delDate) return;
+        
+        let toDelete = transactionsData.filter(t => t.date === delDate);
+        if (toDelete.length === 0) {
+            alert(`找不到日期為 ${delDate} 的數據。`);
+            return;
+        }
+        
+        if (!confirm(`⚠️ 警告：即將刪除 ${delDate} 的 ${toDelete.length} 筆上載數據。\n刪除後無法復原，確定嗎？`)) return;
+        
+        document.body.style.cursor = 'wait';
+        try {
+            for (let t of toDelete) {
+                await deleteDoc(doc(db, "transactions", t.id));
+            }
+            alert(`✅ 成功刪除 ${toDelete.length} 筆數據！`);
+            loadStockData(); // 重新整理表格
+        } catch (e) {
+            console.error(e);
+            alert("❌ 刪除失敗");
+        }
+        document.body.style.cursor = 'default';
+    };
+
+// ========== 替換結束 ==========
     </script>
     <!-- === 登入驗證腳本結束 === -->
 </body>
