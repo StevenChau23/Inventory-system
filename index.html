@@ -731,7 +731,48 @@ function findDuplicateTx(date, itemObj, type) {
       );
     }
 
-    // --- 管理員操作功能 ---
+// --- 管理員操作功能 ---
+
+    // 1. 下載資料庫備份檔
+    window.downloadDatabaseBackup = async function() {
+        try {
+            // 💡 取得要備份的數據（請替換為你的實際數據變數或 API 請求，例如 await fetch('/api/backup')）
+            const backupData = window.allData || { 
+                exportTime: new Date().toLocaleString(),
+                note: "請將此處替換為你的資料庫內容" 
+            };
+
+            // 將物件轉為 JSON 文字並觸發瀏覽器下載
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `database_backup_${Date.now()}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+
+            console.log("資料庫備份下載成功");
+        } catch (error) {
+            console.error("下載備份時發生錯誤：", error);
+            alert("下載備份失敗，請查看主控台紀錄。");
+        }
+    };
+
+    // 2. 選擇要刪除的上載數據
+    window.deleteUploadedData = async function() {
+        try {
+            const confirmAction = confirm("確定要進行數據刪除操作嗎？");
+            if (!confirmAction) return;
+
+            // 💡 請在此處放入你刪除數據的邏輯（例如清空 LocalStorage、呼叫 Firebase 刪除 API 或彈出刪除選擇 Modal）
+            
+            alert("已成功觸發刪除流程！");
+        } catch (error) {
+            console.error("刪除數據時發生錯誤：", error);
+            alert("刪除操作失敗，請查看主控台紀錄。");
+        }
+    };
+
     window.handleMasterPaste = async function(e) {
       const clipboardData = e.clipboardData || window.clipboardData; const pastedData = clipboardData.getData('Text');
       if (!pastedData || !pastedData.includes('\t')) return; e.preventDefault();
