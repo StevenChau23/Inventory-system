@@ -6,12 +6,12 @@
 
 <!-- ========== 替換開始：動態背景與左至右 UI 排版 ========== -->
   <style>
-    body {
+body {
       background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-    /* 1. 將最初系統登入背景改為淡藍色，並支援自訂圖片排版 */
-    body #systemLogin { 
+/* 1. 將最初系統登入背景改為淡藍色，並支援自訂圖片排版 */
+    #systemLogin { 
       background: #e3f2fd !important; 
       background-size: cover !important;
       background-position: center !important;
@@ -19,28 +19,28 @@
       transition: background 0.3s ease;
     }
 
-    /* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
-    body .admin-box, body #adminBox, body [onclick*="openLoginModal"], body [onclick*="view-admin"] {
-      background-color: #f8bbd0 !important; 
-      color: #880e4f !important; 
+/* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
+    .admin-box, #adminBox, [onclick*="openLoginModal"], [onclick*="view-admin"] {
+      background-color: #f8bbd0 !important; /* 淡粉紅色背景 */
+      color: #880e4f !important; /* 深粉紅字體 */
     }
     
-    /* 修正：將管理員登入視窗置中，並加入半透明背景遮罩 */
-    body #loginModal {
+/* 修正：將管理員登入視窗置中，並加入半透明背景遮罩 */
+    #loginModal {
       position: fixed !important;
       top: 0 !important;
       left: 0 !important;
       width: 100vw !important;
       height: 100vh !important;
-      background: rgba(0, 0, 0, 0.5) !important; 
-      /* display: none; 保持原樣不加 important，讓 JS 能夠控制顯示與隱藏 */
+      background: rgba(0, 0, 0, 0.5) !important; /* 半透明黑底遮罩 */
+      display: none;
       justify-content: center !important;
       align-items: center !important;
       z-index: 9999 !important;
     }
 
     /* 確保登入彈出方盒居中且乾淨 */
-    body #loginModal > div, body .login-box {
+    #loginModal > div, .login-box {
       background: white !important;
       padding: 30px !important;
       border-radius: 10px !important;
@@ -48,8 +48,7 @@
       margin: auto !important;
     }
 
-    /* 加入 body 前綴提高 CSS 優先度，確保覆蓋舊設定 */
-    body #mainMenu {
+    #mainMenu {
         display: flex;
         flex-direction: row;
         flex-wrap: wrap;
@@ -59,11 +58,12 @@
         padding: 20px;
     }
 
-    body #mainMenu > div, 
-    body #mainMenu button,
-    body .menu-box {
-        width: 300px !important;
-        height: 310px !important;
+    #mainMenu > div, 
+    #mainMenu button,
+    .menu-box {
+        /* 修改一：取消自動拉伸，改為固定長寬，確保全部方塊大細一致 */
+        width: 300px;
+        height: 310px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -76,27 +76,6 @@
   
   <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
   <style>
-    /* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
-    .view-section {
-        display: none; 
-        opacity: 0;
-        transform: translateY(15px);
-        transition: opacity 0.4s ease, transform 0.4s ease;
-    }
-    .view-section.active {
-        display: block !important; /* 【關鍵修正】：加上 !important 強制覆蓋舊有 HTML 標籤內的 style="display:none" */
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-    /* 2. 主選單方塊 (選單按鈕或卡片) 的懸停 (Hover) 浮動動畫 */
-    body #mainMenu > div:hover, 
-    body #mainMenu button:hover,
-    body .menu-box:hover {
-        transform: translateY(-5px) scale(1.02);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-    }
-  </style>
 /* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
     .view-section {
         display: none; /* 修改二：隱藏未啟用的內容，防止佔用空間將畫面往下推 */
@@ -749,9 +728,8 @@ const checkMatch = (mHa, mCat, mDesc) => {
                   let m = bestFuzzyMatch; let mCode = m.code !== undefined ? m.code : m.haCode;
                   p_haCode = (mCode && mCode !== 'NA') ? mCode : p_haCode; p_catNo = m.catNo || p_catNo; p_desc = m.desc || p_desc;
                   rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
-} else if (action === 'B') {
-                  /* 【修正】：將未定義的變數 uomVal 改為空字串 ""，防止程式崩潰 */
-                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+              } else if (action === 'B') {
+                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: uomVal || "", category: selectedCategory }); } catch(err){}
               } else if (action === 'C') {
                   submitBtn.innerText = "已跳過紀錄"; setTimeout(() => { submitBtn.innerText = "提交紀錄"; submitBtn.disabled = false; }, 2000);
                   return; // 取消寫入資料庫
