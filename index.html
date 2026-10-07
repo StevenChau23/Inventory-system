@@ -1891,14 +1891,23 @@ if (diffDays < 0) {
             let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
 
             // 新增 d.location 在畫面上
-            tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
-                            <td><span style="${catStyle}">${d.category}</span></td>
-                            <td style="font-weight:bold;">${d.cat}</td>
-                            <td>${d.desc}</td>
-                            <td>${d.code}</td>
-                            <td>${d.uom}</td>
-                            <td style="font-weight:bold; color:#2980b9;">${d.location}</td>
-                            <td>${actionHtml}</td>`;
+tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="master-checkbox" data-id="${item.id || ''}" data-key="${item.key || ''}" data-ismaster="${item.isMaster}" data-cat="${item.cat}" data-desc="${item.desc}" data-code="${item.code}">
+                </td>
+                <td>${item.cat}</td>
+                <td>${item.desc}</td>
+                <td>${item.code}</td>
+                <td>${item.uom}</td>
+                <td>${item.location}</td>
+                <td>${item.remark || ''}</td> <!-- 獨立的 Remark 欄位 -->
+                
+                <!-- 獨立的操作欄位，放置 Edit 和 Delete -->
+                <td style="white-space: nowrap;"> 
+                    <button class="action-btn edit-btn" onclick="editMasterItem('${item.id}')">✏️</button>
+                    <button class="action-btn del-btn" onclick="deleteMasterItem('${item.id}')">❌</button>
+                </td>
+            `;
             tbody.appendChild(tr);
         });
     };
