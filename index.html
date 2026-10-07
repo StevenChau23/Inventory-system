@@ -10,10 +10,13 @@ body {
       background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-/* 1. 將最初系統登入背景改為淡藍色 */
+/* 1. 將最初系統登入背景改為淡藍色，並支援自訂圖片排版 */
     #systemLogin { 
-      background: #e3f2fd !important; /* 柔和淡藍色 */
-      background-image: none !important;
+      background: #e3f2fd !important; 
+      background-size: cover !important;
+      background-position: center !important;
+      background-repeat: no-repeat !important;
+      transition: background 0.3s ease;
     }
 
 /* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
@@ -248,7 +251,48 @@ window.verifyAdmin = function() {
         }
     }
     /* ========== 替換結束 ========== */
+/* ========== 新增：自訂登入主題功能 ========== */
+    window.changeLoginTheme = function(type, value) {
+        const sysLogin = document.getElementById('systemLogin');
+        if (!sysLogin) return;
+        
+        if (type === 'color') {
+            sysLogin.style.setProperty('background', value, 'important');
+            sysLogin.style.setProperty('background-image', 'none', 'important');
+            localStorage.setItem('loginThemeType', 'color');
+            localStorage.setItem('loginThemeValue', value);
+        } else if (type === 'image') {
+            const file = value.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const imgUrl = e.target.result;
+                sysLogin.style.setProperty('background-image', `url(${imgUrl})`, 'important');
+                sysLogin.style.setProperty('background-color', 'transparent', 'important');
+                localStorage.setItem('loginThemeType', 'image');
+                localStorage.setItem('loginThemeValue', imgUrl); // 注意：圖片太大可能會超過儲存限制
+            };
+            reader.readAsDataURL(file);
+        }
+        alert('✅ 登入介面主題已更新！你可以登出查看效果。');
+    };
 
+    // 頁面載入時自動套用已儲存的主題
+    window.addEventListener('DOMContentLoaded', () => {
+        const savedType = localStorage.getItem('loginThemeType');
+        const savedValue = localStorage.getItem('loginThemeValue');
+        const sysLogin = document.getElementById('systemLogin');
+        if (sysLogin && savedType && savedValue) {
+            if (savedType === 'color') {
+                sysLogin.style.setProperty('background', savedValue, 'important');
+                sysLogin.style.setProperty('background-image', 'none', 'important');
+            } else if (savedType === 'image') {
+                sysLogin.style.setProperty('background-image', `url(${savedValue})`, 'important');
+                sysLogin.style.setProperty('background-color', 'transparent', 'important');
+            }
+        }
+    });
+    /* ========== 新增結束 ========== */
     // --- Drape / Consumable 數據切換 ---
     window.setQueryCategory = function(cat) {
         currentQueryCategory = cat;
@@ -2688,6 +2732,27 @@ window.onload = () => {
                 <div style="text-align:right; border-top:1px solid #ccc; padding-top:15px;">
                     <button onclick="document.body.removeChild(document.getElementById('specificDeleteModal'))" style="background:#7f8c8d;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;">關閉</button>
                 </div>
+                <!-- ========== 新增：登入介面主題設定 ========== -->
+        <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-top: 20px; text-align: left;">
+            <h3 style="color: #2c3e50; margin-top: 0; font-size: 1.2rem;">🎨 系統登入介面主題設定</h3>
+            <p style="color: #7f8c8d; font-size: 0.9rem;">你可以選擇預設淺色背景，或上載自訂圖片：</p>
+            
+            <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                <strong style="color: #333;">預設顏色：</strong>
+                <!-- 淺藍、淺粉、淺綠、淺黃、預設灰白 -->
+                <button onclick="changeLoginTheme('color', '#e3f2fd')" style="background: #e3f2fd; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡藍色"></button>
+                <button onclick="changeLoginTheme('color', '#f8bbd0')" style="background: #f8bbd0; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡粉紅"></button>
+                <button onclick="changeLoginTheme('color', '#e8f5e9')" style="background: #e8f5e9; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡綠色"></button>
+                <button onclick="changeLoginTheme('color', '#fff9c4')" style="background: #fff9c4; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡黃色"></button>
+                <button onclick="changeLoginTheme('color', '#f4f7f6')" style="background: #f4f7f6; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="預設底色"></button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <strong style="color: #333;">自訂圖片：</strong>
+                <input type="file" accept="image/*" onchange="changeLoginTheme('image', event)" style="font-size: 0.9rem; padding: 5px;">
+            </div>
+        </div>
+        <!-- ========== 新增結束 ========== -->
             </div>
         `;
         document.body.appendChild(modal);
