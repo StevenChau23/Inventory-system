@@ -3,6 +3,103 @@
 <head>
   <meta charset="UTF-8">
   <title>Stock Take & Purchase 系統</title>
+
+<!-- ========== 替換開始：動態背景與左至右 UI 排版 ========== -->
+  <style>
+body {
+      background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
+    }
+
+/* 1. 將最初系統登入背景改為淡藍色 */
+    #systemLogin { 
+      background: #e3f2fd !important; /* 柔和淡藍色 */
+      background-image: none !important;
+    }
+
+/* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
+    .admin-box, #adminBox, [onclick*="openLoginModal"], [onclick*="view-admin"] {
+      background-color: #f8bbd0 !important; /* 淡粉紅色背景 */
+      color: #880e4f !important; /* 深粉紅字體 */
+    }
+    
+/* 修正：將管理員登入視窗置中，並加入半透明背景遮罩 */
+    #loginModal {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      background: rgba(0, 0, 0, 0.5) !important; /* 半透明黑底遮罩 */
+      display: none;
+      justify-content: center !important;
+      align-items: center !important;
+      z-index: 9999 !important;
+    }
+
+    /* 確保登入彈出方盒居中且乾淨 */
+    #loginModal > div, .login-box {
+      background: white !important;
+      padding: 30px !important;
+      border-radius: 10px !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important;
+      margin: auto !important;
+    }
+
+    #mainMenu {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: stretch;
+        gap: 20px;
+        padding: 20px;
+    }
+
+    #mainMenu > div, 
+    #mainMenu button,
+    .menu-box {
+        /* 修改一：取消自動拉伸，改為固定長寬，確保全部方塊大細一致 */
+        width: 300px;
+        height: 310px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        box-sizing: border-box;
+        transition: all 0.3s ease-in-out;
+    }
+  </style>
+  <!-- ========== 替換結束 ========== -->
+  
+  <!-- 新增：確保主選單方塊容器及畫面切換支援動畫 -->
+  <style>
+/* 1. 畫面切換 (視圖容器) 的淡入與滑動動畫 */
+    .view-section {
+        display: none; /* 修改二：隱藏未啟用的內容，防止佔用空間將畫面往下推 */
+        opacity: 0;
+        transform: translateY(15px);
+        transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+    .view-section.active {
+        display: block; /* 修改二：點擊進入後才顯示，確保內容維持在最上方 */
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    /* 2. 主選單方塊 (選單按鈕或卡片) 的懸停 (Hover) 浮動動畫 */
+    #mainMenu > div, 
+    #mainMenu button,
+    .menu-box {
+        transition: all 0.3s ease-in-out;
+    }
+    #mainMenu > div:hover, 
+    #mainMenu button:hover,
+    .menu-box:hover {
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+    }
+  </style>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- 引入 SheetJS 解析 Excel 檔案 (.xlsx / .xls) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -41,20 +138,33 @@
             mCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
         }
 
-        if (!mCat && !mDesc) {
-            let search = String(t.item).toLowerCase().replace(/[-_\s()]/g, '');
-            let foundMaster = masterItemsData.find(m => {
-                let c = (m.code || "").toLowerCase().replace(/[-_\s()]/g, ''); 
-                let cat = (m.catNo || "").toLowerCase().replace(/[-_\s()]/g, ''); 
-                let d = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
-                return (c && c === search) || (cat && cat === search) || (d && d === search);
+        // ================= 加強與 Master List 的對齊，修復全寫/簡寫漏數問題 =================
+        let searchCode = (mCode !== "NA" ? mCode : "").toLowerCase().replace(/[-_\s()]/g, '');
+        let searchDesc = (mDesc || (!String(t.item).includes(" | ") ? String(t.item) : "")).toLowerCase().replace(/[-_\s()]/g, '');
+
+        let foundMaster = null;
+        if (searchCode || searchDesc) {
+            foundMaster = masterItemsData.find(m => {
+                let mc = (m.code || "").toLowerCase().replace(/[-_\s()]/g, ''); 
+                let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                return (searchCode && mc === searchCode) || (searchDesc && md === searchDesc);
             });
-            if (foundMaster) { 
-                mCode = foundMaster.code || mCode; 
-                mCat = foundMaster.catNo || mCat; 
-                mDesc = foundMaster.desc || mDesc; 
+
+            // 如果找不到完全一致，嘗試模糊比對 (解決手動輸入簡寫 "pouches" 無法對應全寫的問題)
+            if (!foundMaster && searchDesc.length >= 3) {
+                foundMaster = masterItemsData.find(m => {
+                    let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                    return md.includes(searchDesc);
+                });
             }
         }
+
+        if (foundMaster) { 
+            mCode = foundMaster.code || mCode; 
+            mCat = foundMaster.catNo || mCat; 
+            mDesc = foundMaster.desc || mDesc; 
+        }
+        // ====================================================================================
 
         if (!mCode || mCode.trim() === "" || mCode === "NA" || mCode.trim().toLowerCase() === mCat.trim().toLowerCase()) {
             mCode = "NA";
@@ -62,24 +172,52 @@
         return { mCat, mDesc, mCode };
     }
 
-    // --- 視圖切換與登入控制 ---
-    window.showMainMenu = function() {
+// --- 視圖切換與登入控制 ---
+window.showMainMenu = function() {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-        document.getElementById('mainMenu').classList.add('active');
-        document.getElementById('backBtn').style.display = 'none';
-        document.querySelector('.main-title').style.display = 'block';
+        
+        // 【修正重點】：顯示主選單時，同步隱藏最初的系統登入畫面
+        let sysLogin = document.getElementById('systemLogin');
+        if (sysLogin) sysLogin.style.display = 'none';
+
+        let menu = document.getElementById('mainMenu');
+        if (menu) {
+            menu.classList.add('active');
+            menu.style.display = 'flex';
+        }
+        
+        let btn = document.getElementById('backBtn');
+        if (btn) btn.style.display = 'none';
+        
+        let title = document.querySelector('.main-title');
+        if (title) title.style.display = 'block';
+
+        window.scrollTo(0, 0); 
     }
 
     window.showView = function(viewId) {
         document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-        document.getElementById(viewId).classList.add('active');
-        document.getElementById('backBtn').style.display = 'inline-flex';
-        document.querySelector('.main-title').style.display = 'none';
+        
+        let menu = document.getElementById('mainMenu');
+        if (menu) {
+            menu.style.display = 'none'; // 【修改重點】：進入方塊後，隱藏主選單，這樣介面內容就會自動置頂
+        }
+
+        let view = document.getElementById(viewId);
+        if (view) view.classList.add('active');
+        
+        let btn = document.getElementById('backBtn');
+        if (btn) btn.style.display = 'inline-flex';
+        
+        let title = document.querySelector('.main-title');
+        if (title) title.style.display = 'none';
 
         if(viewId === 'view-purchase') loadPurchaseList();
         if(viewId === 'view-expiry') renderExpiryTable();
         if(viewId === 'view-master') renderMasterList();
         if(viewId === 'view-query') filterHistory(); 
+
+        window.scrollTo(0, 0); 
     }
 
     window.openLoginModal = function() {
@@ -92,16 +230,24 @@
         document.getElementById('adminPwd').value = '';
     }
 
-    window.verifyAdmin = function() {
+/* ========== 替換開始：登入成功後進入管理員設定頁面 ========== */
+window.verifyAdmin = function() {
         const user = document.getElementById('adminUser').value;
         const pwd = document.getElementById('adminPwd').value;
         if(user === 'tszfung' && pwd === '22080030') {
             closeLoginModal();
+            
+            // 登入成功後隱藏最初的登入畫面
+            let sysLogin = document.getElementById('systemLogin');
+            if (sysLogin) sysLogin.style.display = 'none';
+            
+            // 【修復關鍵】：將原本的 showMainMenu() 改為 showView('view-admin')，直接打開管理員設定頁面與功能
             showView('view-admin');
         } else {
             alert('❌ 帳戶名稱或密碼錯誤！');
         }
     }
+    /* ========== 替換結束 ========== */
 
     // --- Drape / Consumable 數據切換 ---
     window.setQueryCategory = function(cat) {
@@ -138,13 +284,116 @@
         return rows;
     }
 
-    function normalizeCode(code) { return (code || "").toString().replace(/[-_\s()]/g, '').toLowerCase().trim(); }
+function normalizeCode(code) { 
+        // 強化過濾：移除所有非英數、非中文字元（忽略所有標點符號與空格），解決問題三
+        return (code || "").toString().replace(/[^\w\u4e00-\u9fa5]/g, '').toLowerCase().trim(); 
+    }
 
-    function isSameItem(item1, item2) {
+    // 計算兩個字串的相似度 (Bigram 演算法)
+    function getSimilarity(s1, s2) {
+        if (!s1 || !s2) return 0;
+        let str1 = String(s1).toLowerCase().replace(/\s+/g, ''); 
+        let str2 = String(s2).toLowerCase().replace(/\s+/g, '');
+        if (str1 === str2) return 1.0;
+        if (str1.length < 2 || str2.length < 2) return 0.0;
+        let match = 0;
+        for(let i=0; i<str1.length-1; i++) { if(str2.includes(str1.substring(i, i+2))) match++; }
+        return (2.0 * match) / (str1.length - 1 + str2.length - 1);
+    }
+
+// 彈出視窗讓使用者選擇相似物品 (改為批次確認列表 Batch Review)
+    window.showBatchReviewModal = function(pendingList) {
+        return new Promise(resolve => {
+            const modal = document.createElement('div');
+            modal.id = 'batchReviewModal';
+            modal.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;justify-content:center;align-items:center;overflow-y:auto;";
+            
+            let trs = pendingList.map((item, index) => {
+                let newText = `Cat: ${item.newRow.catNo}<br>Desc: ${item.newRow.desc}<br>HA: ${item.newRow.haCode}`;
+                let oldText = `Cat: ${item.suggestedMatch.catNo || ''}<br>Desc: ${item.suggestedMatch.desc || ''}<br>HA: ${item.suggestedMatch.code || item.suggestedMatch.haCode || ''}`;
+                
+                // 預設建議選 B (全新物品)
+                let checkedA = "";
+                let checkedB = "checked"; 
+                let checkedC = "";
+                
+                let riskBadge = item.numberMismatch 
+                    ? `<span style="background:#e74c3c;color:white;padding:2px 6px;border-radius:4px;font-size:12px;">高風險差異(數字不同)</span>` 
+                    : `<span style="background:#f39c12;color:white;padding:2px 6px;border-radius:4px;font-size:12px;">相似度: ${Math.round(item.sim * 100)}%</span>`;
+
+return `
+                    <tr style="border-bottom:1px solid #ccc; background: ${item.numberMismatch ? '#ffebee' : '#fff'}">
+                        <td style="padding:10px;font-size:14px;vertical-align:top;">${newText}</td>
+                        <td style="padding:10px;font-size:14px;vertical-align:top;">${oldText}</td>
+                        <td style="padding:10px;vertical-align:top;font-size:14px;">
+                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="A" ${checkedA}> 【選項 A】視為既有 Master 物品 (將此筆紀錄合併至該 Master 項目)</label>
+                            <label style="display:block;margin-bottom:5px;cursor:pointer;"><input type="radio" name="action_${index}" value="B" ${checkedB}> 【選項 B】視為全新物品 (寫入資料庫並自動加入 Master List)</label>
+                            <label style="display:block;cursor:pointer;"><input type="radio" name="action_${index}" value="C" ${checkedC}> 【選項 C】不需要紀錄 (直接跳過)</label>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            modal.innerHTML = `
+                <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:1000px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 5px 15px rgba(0,0,0,0.3);">
+                    <h3 style="color:#2c3e50;margin-top:0;">⚠️ 待確認相似物品列表 (Batch Review)</h3>
+                    <p style="color:#555;">系統發現以下物品與資料庫現有物品高度相似 (≥75%)。請一次過勾選處理方式：</p>
+                    <div style="overflow-y:auto;flex-grow:1;border:1px solid #ddd;margin-bottom:15px;">
+                        <table style="width:100%;border-collapse:collapse;text-align:left;">
+                            <thead style="background:#f4f7f6;position:sticky;top:0;z-index:1;">
+                                <tr>
+                                    <th style="padding:10px;border-bottom:2px solid #ccc;width:30%;">Excel 的疑慮物品</th>
+                                    <th style="padding:10px;border-bottom:2px solid #ccc;width:30%;">系統建議相似物品</th>
+                                    <th style="padding:10px;border-bottom:2px solid #ccc;width:40%;">操作選項</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${trs}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="text-align:right;">
+                        <button id="batchConfirmBtn" style="background:#27ae60;color:white;border:none;padding:12px 25px;font-size:16px;border-radius:5px;cursor:pointer;font-weight:bold;">確認提交全部選項</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            document.getElementById('batchConfirmBtn').onclick = () => {
+                let results = [];
+                for (let i = 0; i < pendingList.length; i++) {
+                    let selected = document.querySelector(`input[name="action_${i}"]:checked`);
+                    results.push(selected ? selected.value : 'B'); 
+                }
+                document.body.removeChild(modal);
+                resolve(results);
+            };
+        });
+    };
+
+function isSameItem(item1, item2) {
+      // ===== 第二防線：數字敏感度套用到交易紀錄比對 =====
+      // 避免 S5/S6 寫入資料庫時，因 HA Code 相同導致 In/Out/OpenBal 被互相覆蓋或漏紀錄
+      let str1 = (item1.catNo || "") + " " + (item1.desc || "") + " " + String(item1.item || "");
+      let str2 = (item2.catNo || "") + " " + (item2.desc || "") + " " + String(item2.item || "");
+      let nums1 = String(str1).match(/\d+/g)?.join(',') || '';
+      let nums2 = String(str2).match(/\d+/g)?.join(',') || '';
+      if (nums1 !== nums2 && nums1 !== "" && nums2 !== "") {
+          return false; // 數字不同，直接判定為不同物品，強制系統獨立紀錄
+      }
+      // ================================================
+
       let c1 = normalizeCode(item1.item); let c2 = normalizeCode(item2.item);
       let d1 = normalizeCode(item1.desc); let d2 = normalizeCode(item2.desc);
       let cat1 = normalizeCode(item1.catNo); let cat2 = normalizeCode(item2.catNo);
       let ha1 = normalizeCode(item1.haCode); let ha2 = normalizeCode(item2.haCode);
+
+      // ===== 終極防線：文字特徵嚴格比對 (修復漏紀錄的核心) =====
+      // 如果 Cat No 或 Description 兩者都有，但發現「明確不相同」，則絕對是不同物品！
+      // 防止兩者 HA Code 相同，但文字特徵不同 (如相似度極高的 S5 vs S6) 時被錯誤當成同一物品
+      if (cat1 && cat2 && cat1 !== cat2) return false;
+      if (d1 && d2 && d1 !== d2) return false;
+      // ========================================================
 
       if (c1 && c2 && c1 === c2) return true;
       if (ha1 && ha2 && ha1 !== 'na' && ha2 !== 'na' && ha1 === ha2) return true;
@@ -152,7 +401,29 @@
       if (combo1 === combo2 && combo1 !== "|") return true;
       return false;
     }
+window.getItemBalanceKey = function(t) {
+        let { mCat, mDesc, mCode } = extractItemDetails(t);
+        let c = normalizeCode(mCode);
+        let cat = normalizeCode(mCat);
+        let d = normalizeCode(mDesc);
 
+        // ===== 結餘運算套用數字敏感度 =====
+        // 確保結餘系統能分辨 S5, S6，不會因為 HA Code 相同就把結餘加在一起
+        let rawStr = (t.catNo || "") + " " + (t.desc || "") + " " + String(t.item || "");
+        let nums = String(rawStr).match(/\d+/g)?.join(',') || '';
+        let numSuffix = nums ? "|nums:" + nums : "";
+        // ==================================
+
+        // ===== 修正：將 HA Code, Cat No, Desc 共同作為結餘分流的 Key =====
+        // 防止不同物品因 HA Code (mCode) 一樣，導致結餘在畫面上被錯誤相加
+        let keyStr = "";
+        if (c && c !== "na") keyStr += "code:" + c;
+        if (cat) keyStr += "|cat:" + cat;
+        if (d) keyStr += "|desc:" + d;
+
+        if (keyStr !== "") return keyStr + numSuffix;
+        return "raw:" + normalizeCode(t.item || "") + numSuffix;
+    };
     window.loadMasterItems = async function() {
         try {
             const querySnapshot = await getDocs(collection(db, "master_items"));
@@ -283,27 +554,11 @@
             .filter(t => (t.category || 'Consumable') === category)
             .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        sortedData.forEach(t => {
-            let tCode = (t.haCode || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tCat = (t.catNo || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tDesc = (t.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
-            let tItemRaw = String(t.item).toLowerCase().replace(/[-_\s()|]/g, '');
-            
-            let isMatch = false;
-            if(tItemRaw === searchRaw || (tCat+tDesc+tCode).includes(searchRaw)) {
-                isMatch = true;
-            } else {
-                let parts = itemName.split("|").map(s => s.trim().toLowerCase());
-                isMatch = parts.every(part => {
-                    if (!part) return true;
-                    return tItemRaw.includes(part.replace(/[-_\s()]/g, '')) || 
-                           (t.haCode||"").toLowerCase().includes(part) || 
-                           (t.catNo||"").toLowerCase().includes(part) || 
-                           (t.desc||"").toLowerCase().includes(part);
-                });
-            }
+let targetKey = getItemBalanceKey({ item: itemName, category: category });
 
-            if(isMatch) {
+        sortedData.forEach(t => {
+            let tKey = getItemBalanceKey(t);
+            if(tKey === targetKey) {
                 let q = parseFloat(t.qty) || 0;
                 let adj = parseFloat(t.sysAdjust) || 0;
                 if(t.type === 'Opening Balance') { bal = q; }
@@ -341,7 +596,7 @@
         if (addBox && addInput && e.target !== addBox && e.target !== addInput && !addBox.contains(e.target)) addBox.style.display = "none";
     });
 
-    document.getElementById('stockForm').addEventListener('submit', async (e) => {
+document.getElementById('stockForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const submitBtn = document.getElementById('submitBtn');
       submitBtn.innerText = "寫入中..."; submitBtn.disabled = true;
@@ -353,10 +608,96 @@
           p_catNo = parts[0] ? parts[0].trim() : "";
           p_desc = parts[1] ? parts[1].trim() : "";
           p_haCode = (parts.length > 2 && parts[2]) ? parts[2].trim() : "NA";
+      } else {
+          p_desc = rawItem; // 如果沒有分隔符號，預設輸入當作 description
+      }
+
+      const selectedCategory = document.getElementById('addCategory').value;
+
+      // ==========================================
+      // 套用第三點：手動新增時的 75% 相似度與數字敏感度檢查
+      // ==========================================
+      let nHa = normalizeCode(p_haCode); let nCat = normalizeCode(p_catNo); let nDesc = normalizeCode(p_desc);
+      let foundExisting = false; let exactMatchRef = null;
+      
+const checkMatch = (mHa, mCat, mDesc) => {
+          // ===== 加入數字敏感度防線 =====
+          // 確保 S5, S6 不會因為 HA Code 相同而在第一關被誤判為 100% 吻合
+          let strNew = (nCat || "") + (nDesc || "") + (nHa !== 'na' ? nHa : "");
+          let strOld = (mCat || "") + (mDesc || "") + (mHa !== 'na' ? mHa : "");
+          let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
+          let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+          if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") return false;
+          // ===========================
+
+          // ===== 加入文字特徵防線 =====
+          if (nCat && mCat && nCat !== mCat) return false;
+          if (nDesc && mDesc && nDesc !== mDesc) return false;
+          // ===========================
+
+          if (nHa && nHa !== 'na' && mHa === nHa) return true; 
+          if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
+          if (nCat && !nDesc) return (mCat === nCat);
+          if (!nCat && nDesc) return (mDesc === nDesc);
+          return false;
+      };
+
+      for (let m of masterItemsData) { if (checkMatch(normalizeCode(m.code), normalizeCode(m.catNo), normalizeCode(m.desc))) { exactMatchRef = m; foundExisting = true; break; } }
+      if (!foundExisting) { for (let t of transactionsData) { if (checkMatch(normalizeCode(t.haCode), normalizeCode(t.catNo), normalizeCode(t.desc))) { exactMatchRef = t; foundExisting = true; break; } } }
+
+      if (foundExisting) {
+          // 100% 吻合
+          p_haCode = exactMatchRef.code !== undefined && exactMatchRef.code !== 'NA' && exactMatchRef.code !== "" ? exactMatchRef.code : (exactMatchRef.haCode !== 'NA' && exactMatchRef.haCode ? exactMatchRef.haCode : p_haCode);
+          p_catNo = exactMatchRef.catNo || p_catNo; p_desc = exactMatchRef.desc || p_desc;
+          rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
+      } else {
+          // 檢查相似度與數字差異 (以 Cat No 優先，再看 Description / HA code)
+          let bestFuzzyMatch = null; let highestSim = 0;
+          let strNew = p_catNo ? p_catNo : (p_desc ? p_desc : (p_haCode && p_haCode !== 'NA' ? p_haCode : rawItem));
+
+          for (let m of masterItemsData) {
+              let mCode = (m.code && m.code !== 'NA') ? m.code : "";
+              let strOld = m.catNo ? m.catNo : (m.desc ? m.desc : mCode);
+              let sim = getSimilarity(strNew, strOld);
+              if (sim > highestSim) { highestSim = sim; bestFuzzyMatch = m; }
+          }
+          
+          let isNumberMismatch = false;
+          if (bestFuzzyMatch) {
+              let mCode = (bestFuzzyMatch.code && bestFuzzyMatch.code !== 'NA') ? bestFuzzyMatch.code : "";
+              let strOld = bestFuzzyMatch.catNo ? bestFuzzyMatch.catNo : (bestFuzzyMatch.desc ? bestFuzzyMatch.desc : mCode);
+              let numsNew = String(strNew).match(/\d+/g)?.join(',') || ''; let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+              if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") isNumberMismatch = true;
+          }
+
+          if (isNumberMismatch) {
+              // 數字不同，直接視為新 item 並加入 Master List
+              try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+          } else if (highestSim >= 0.75 && highestSim < 1.0) {
+              // >=75%相似，彈出視窗 (沿用批量確認Modal，只送一筆進去)
+              let reviewResults = await window.showBatchReviewModal([{
+                  newRow: { catNo: p_catNo, desc: p_desc, haCode: p_haCode }, suggestedMatch: bestFuzzyMatch, sim: highestSim, numberMismatch: false
+              }]);
+              let action = reviewResults[0];
+              
+              if (action === 'A') {
+                  let m = bestFuzzyMatch; let mCode = m.code !== undefined ? m.code : m.haCode;
+                  p_haCode = (mCode && mCode !== 'NA') ? mCode : p_haCode; p_catNo = m.catNo || p_catNo; p_desc = m.desc || p_desc;
+                  rawItem = [p_catNo, p_desc, p_haCode !== 'NA' ? p_haCode : ""].filter(Boolean).join(' | ');
+              } else if (action === 'B') {
+                  try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: uomVal || "", category: selectedCategory }); } catch(err){}
+              } else if (action === 'C') {
+                  submitBtn.innerText = "已跳過紀錄"; setTimeout(() => { submitBtn.innerText = "提交紀錄"; submitBtn.disabled = false; }, 2000);
+                  return; // 取消寫入資料庫
+              }
+          } else {
+              // <75% 完全不相似，寫入資料庫並自動加入 Master List
+              try { await addDoc(collection(db, "master_items"), { catNo: p_catNo, desc: p_desc, code: p_haCode || "NA", uom: "", category: selectedCategory }); } catch(err){}
+          }
       }
 
       const data = {
-        category: document.getElementById('addCategory').value,
+        category: selectedCategory,
         date: document.getElementById('date').value,
         item: rawItem,
         catNo: p_catNo,
@@ -382,9 +723,10 @@
       } catch (error) { console.error(error); alert("寫入失敗"); submitBtn.disabled = false; submitBtn.innerText = "提交紀錄"; }
     });
 
-    function isDuplicateTx(date, itemObj, type, qty, sysAdjust = 0) {
-      return transactionsData.some(t => 
-        t.date === date && t.type === type && t.qty === qty && (t.sysAdjust || 0) === sysAdjust && 
+function findDuplicateTx(date, itemObj, type) {
+      // 修改為 find() 讓系統能取得具體的紀錄 ID 和數量，解決匯入 Excel 失敗的問題
+      return transactionsData.find(t => 
+        t.date === date && t.type === type && 
         (t.category || 'Consumable') === (itemObj.category || 'Consumable') && isSameItem(t, itemObj)
       );
     }
@@ -463,6 +805,32 @@
         }
         document.body.style.cursor = 'default';
     }
+window.fixSystemBalances = async function() {
+        if(!confirm("⚠️ 確定要執行「修正結餘運算」嗎？\n這將會清除系統中異常的自動調整數 (sysAdjust)，強制以真實的 In / Out 數量重新計算結餘！")) return;
+        document.body.style.cursor = 'wait';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e67e22; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+        loadingDiv.innerText = "🛠 正在修復結餘運算，清除異常調整數中..."; 
+        document.body.appendChild(loadingDiv);
+
+        try {
+            let count = 0;
+            for (let t of transactionsData) {
+                if (t.sysAdjust && t.sysAdjust !== 0) {
+                    await updateDoc(doc(db, "transactions", t.id), { sysAdjust: 0 });
+                    count++;
+                }
+            }
+            document.body.removeChild(loadingDiv);
+            alert(`✅ 結餘修復完成！共移除了 ${count} 筆隱藏的異常調整數。\n系統現在會根據正常的加減邏輯 (例如 51-15=36) 顯示結餘。`);
+            loadStockData();
+        } catch (e) {
+            console.error(e);
+            if(document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv);
+            alert("❌ 修復失敗，請檢查網絡連接。");
+        }
+        document.body.style.cursor = 'default';
+    }
 
     function autoDetectYearFromFileName(fileName) {
       if (!fileName) return null; let match = fileName.match(/(20\d{2})[-_](20\d{2})/);
@@ -470,161 +838,346 @@
       if (match) return parseInt(match[1]); return null;
     }
 
+// 通用處理 Stock Take Excel 數據矩陣 (融合 upload.txt 對齊演算法與 index_12.html 分類匹配)
     async function processStockMatrix(matrixRows, fileName = "") {
       let detectedYear = autoDetectYearFromFileName(fileName);
-      if (detectedYear) document.getElementById('importYearSelect').value = detectedYear.toString();
-      const selectedYear = parseInt(document.getElementById('importYearSelect').value);
+      let yearSelect = document.getElementById('importYearSelect');
+      
+      // ===== 改動開始：自動判斷，若檔名年份不在選單內，自動新增該年份以防崩潰 =====
+      if (detectedYear) {
+          let optionExists = Array.from(yearSelect.options).some(opt => opt.value === detectedYear.toString());
+          if (!optionExists) {
+              let newOpt = document.createElement('option');
+              newOpt.value = detectedYear.toString();
+              newOpt.text = detectedYear + " 年度";
+              yearSelect.appendChild(newOpt);
+          }
+          yearSelect.value = detectedYear.toString();
+      }
+      // ===== 改動結束 =====
+
+      const selectedYear = parseInt(yearSelect.value);
+      
+      // ===== 改動開始：阻截無效年份 =====
+      if (isNaN(selectedYear)) {
+          alert("❌ 無法取得匯入年度，請確認下拉選單已選擇正確的年份！");
+          return;
+      }
+      // ===== 改動結束 =====
+
       const selectedCategory = document.getElementById('selectedImportCategory').value;
 
       if (!confirm(`系統將匯入至【${selectedCategory}】資料庫，為 ${selectedYear}-${selectedYear+1} 年度 (4月1日 至 隔年3月31日)。\n⚠️ 系統將以 Excel 上的結餘為準，若發生無 In/Out 紀錄但結餘變動的情況，系統將自動產生調整紀錄。\n是否確定繼續？`)) return;
 
       const loadingDiv = document.createElement('div');
       loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#27ae60; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold; box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-      loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; document.body.appendChild(loadingDiv);
+      loadingDiv.innerText = "⏳ 正在處理數據並對齊結餘... (需時較長，請勿關閉視窗)"; 
+      document.body.appendChild(loadingDiv);
 
       try {
-        let idxDesc = -1, idxCat = -1, idxCssd = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
+let idxDesc = -1, idxCat = -1, idxHaCode = -1, idxOpenBal = -1, idxUom = -1;
+
+        // 1. 掃描前 10 行尋找 Metadata 的確切欄位
         for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
             let row = matrixRows[r] || [];
             for (let c = 0; c < row.length; c++) {
-                let cellVal = String(row[c] || '').toLowerCase().trim();
-                if (cellVal.includes('description') || cellVal.includes('item description')) idxDesc = c;
-                if (cellVal.includes('cat no') || cellVal === 'cat' || cellVal.includes('cat. no') || cellVal.includes('cat.no')) idxCat = c;
-                if (cellVal.includes('ha item code') || cellVal.includes('ha item no') || cellVal.includes('ha code')) idxHaCode = c;
-                if (cellVal.includes('cssd code') || cellVal.includes('cssd')) idxCssd = c;
-                if (cellVal.includes('uom (box)') || cellVal.includes('uom(box)') || cellVal === 'uom' || cellVal.includes('uom')) { if (idxUom === -1 || cellVal.includes('box')) idxUom = c; }
-                if (cellVal.includes('opening balance') || cellVal.includes('open bal') || cellVal === 'open bal') idxOpenBal = c;
-            }
+                // 清除所有符號與空白，只比對英文字母與數字 (完美涵蓋所有大小寫和符號)
+                let cellVal = String(row[c] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (cellVal === 'itemdescription' || cellVal === 'description') idxDesc = c;
+                else if (cellVal === 'catno') idxCat = c;
+                else if (cellVal === 'cssdcode' || cellVal === 'haitemcode') idxHaCode = c;
+else if (cellVal === 'openingbalance' || cellVal === 'openbal') idxOpenBal = c;
+                else if (cellVal.includes('uom') && idxUom === -1) idxUom = c; // 支援 UOM 或 UOM (Box)           
+                }
         }
-        if (idxOpenBal === -1) idxOpenBal = 15; 
 
+        // 2. 找出 12 個月份的 In/Out/Balance 欄位群組
         let monthBlocks = []; let headerRowIndex = 0;
         for (let r = 0; r < Math.min(matrixRows.length, 10); r++) {
-            let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().trim()) : []; let tempBlocks = [];
-            for (let i = 0; i < row.length - 2; i++) { if (row[i] === 'in' && row[i+1] === 'out' && (row[i+2] === 'balance' || row[i+2] === 'bal')) { tempBlocks.push({ in: i, out: i+1, bal: i+2 }); } }
-            if (tempBlocks.length >= 12) { monthBlocks = tempBlocks.slice(-12); headerRowIndex = r; break;
-            } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { monthBlocks = tempBlocks; headerRowIndex = r; }
+            let row = matrixRows[r] ? Array.from(matrixRows[r], c => String(c ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')) : []; 
+            let tempBlocks = [];
+            for (let i = 0; i < row.length - 2; i++) { 
+                let c1 = row[i], c2 = row[i+1], c3 = row[i+2];
+                // 涵蓋 Bal 或 Balance
+                if (c1 === 'in' && c2 === 'out' && (c3 === 'bal' || c3 === 'balance')) { 
+                    tempBlocks.push({ in: i, out: i+1, bal: i+2 }); 
+                } 
+            }
+            if (tempBlocks.length >= 12) { 
+                monthBlocks = tempBlocks.slice(-12); 
+                headerRowIndex = r; 
+                break;
+            } else if (tempBlocks.length > 0 && monthBlocks.length === 0) { 
+                monthBlocks = tempBlocks; 
+                headerRowIndex = r; 
+            }
         }
 
-        let importCount = 0;
+// ======= 修改區塊二：改為先批次分類再寫入 =======
+        let pendingReviewItems = [];
+        let readyToProcessItems = [];
+
         for (let r = headerRowIndex + 1; r < matrixRows.length; r++) {
-          let cells = matrixRows[r]; if (!cells || cells.length < 3) continue;
+          let cells = matrixRows[r]; 
+          if (!cells || cells.length < 3) continue;
 
           let catNo = idxCat !== -1 && cells[idxCat] !== undefined ? String(cells[idxCat]).trim() : "";
           let desc = idxDesc !== -1 && cells[idxDesc] !== undefined ? String(cells[idxDesc]).trim() : "";
-          let cssd = idxCssd !== -1 && cells[idxCssd] !== undefined ? String(cells[idxCssd]).trim() : "";
-          let uom = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
-          let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+let haCode = idxHaCode !== -1 && cells[idxHaCode] !== undefined ? String(cells[idxHaCode]).trim() : "";
+          let uomVal = idxUom !== -1 && cells[idxUom] !== undefined ? String(cells[idxUom]).trim() : "";
+          
           if (!haCode || haCode.trim() === "") haCode = "NA";
+          
+// 【規則 1】: 要求上傳的excel內每下一行都是獨立新item，即使這3項只有一項有資料都必須紀錄
+          if (catNo === "" && desc === "" && (haCode === "NA" || haCode === "")) continue; 
 
-if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
+// 讀取期初結餘
+          let currentBal = 0;
+          let isExcelOpenBalEmpty = true; // 紀錄新上載excel的opening balance是否為空白
+          if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
+              let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim();
+              if (!isNaN(parseFloat(oVal))) {
+                  currentBal = parseFloat(oVal);
+                  isExcelOpenBalEmpty = false;
+              }
+          }
 
-          // -- 修正: 先檢查資料庫是否已有相同物品，防止建立重覆物品 --
           let nHa = normalizeCode(haCode); let nCat = normalizeCode(catNo); let nDesc = normalizeCode(desc);
           let foundExisting = false;
+          let exactMatchRef = null;
           
+const checkMatch = (mHa, mCat, mDesc) => {
+              // ===== 加入數字敏感度防線 =====
+              let strNew = (nCat || "") + (nDesc || "") + (nHa !== 'na' ? nHa : "");
+              let strOld = (mCat || "") + (mDesc || "") + (mHa !== 'na' ? mHa : "");
+              let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
+              let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+              if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") return false;
+              // ===========================
+
+              // ===== 加入文字特徵防線 (修復 Excel 讀取合併錯誤) =====
+              if (nCat && mCat && nCat !== mCat) return false;
+              if (nDesc && mDesc && nDesc !== mDesc) return false;
+              // ===========================
+
+              if (nHa && nHa !== 'na' && mHa === nHa) return true; 
+              if (nCat && nDesc) return (mCat === nCat && mDesc === nDesc);
+              if (nCat && !nDesc) return (mCat === nCat);
+              if (!nCat && nDesc) return (mDesc === nDesc);
+              return false;
+          };
+
+          // 1. 完全吻合檢查
           for (let m of masterItemsData) {
-              let mHa = normalizeCode(m.code); let mCat = normalizeCode(m.catNo); let mDesc = normalizeCode(m.desc);
-              if ((nHa && nHa !== 'na' && mHa === nHa) || (nCat && nDesc && mCat === nCat && mDesc === nDesc)) {
-                  haCode = m.code !== 'NA' ? m.code : haCode; catNo = m.catNo || catNo; desc = m.desc || desc; 
-                  foundExisting = true; break;
-              }
+              if (checkMatch(normalizeCode(m.code), normalizeCode(m.catNo), normalizeCode(m.desc))) { exactMatchRef = m; foundExisting = true; break; }
           }
           if (!foundExisting) {
               for (let t of transactionsData) {
-                  let tHa = normalizeCode(t.haCode); let tCat = normalizeCode(t.catNo); let tDesc = normalizeCode(t.desc);
-                  if ((nHa && nHa !== 'na' && tHa === nHa) || (nCat && nDesc && tCat === nCat && tDesc === nDesc)) {
-                      haCode = t.haCode !== 'NA' ? t.haCode : haCode; catNo = t.catNo || catNo; desc = t.desc || desc; 
-                      foundExisting = true; break;
+                  if (checkMatch(normalizeCode(t.haCode), normalizeCode(t.catNo), normalizeCode(t.desc))) { exactMatchRef = t; foundExisting = true; break; }
+              }
+          }
+
+let rowData = { catNo, desc, haCode, currentBal, cells, uomVal, isExcelOpenBalEmpty };
+
+          if (foundExisting) {
+              // 100% 吻合
+              rowData.haCode = exactMatchRef.code !== undefined && exactMatchRef.code !== 'NA' && exactMatchRef.code !== "" ? exactMatchRef.code : (exactMatchRef.haCode !== 'NA' && exactMatchRef.haCode ? exactMatchRef.haCode : haCode); 
+              rowData.catNo = exactMatchRef.catNo || catNo; 
+              rowData.desc = exactMatchRef.desc || desc;
+              readyToProcessItems.push(rowData);
+          } else {
+              // 2. 相似度與數字差異檢查
+              let bestFuzzyMatch = null;
+              let highestSim = 0;
+              // 【規則 3】: 如cat no為空白，則參照description或HA item code
+              let strNew = catNo ? catNo : (desc ? desc : (haCode && haCode !== 'NA' ? haCode : ""));
+
+              // 檢查 Master
+              for (let m of masterItemsData) {
+                  let mCode = (m.code && m.code !== 'NA') ? m.code : "";
+                  let strOld = m.catNo ? m.catNo : (m.desc ? m.desc : mCode);
+                  let sim = getSimilarity(strNew, strOld);
+                  if (sim > highestSim) { highestSim = sim; bestFuzzyMatch = m; }
+              }
+
+              let isNumberMismatch = false;
+              if (bestFuzzyMatch) {
+                  let matchCode = (bestFuzzyMatch.code || bestFuzzyMatch.haCode || "");
+                  let strOld = bestFuzzyMatch.catNo ? bestFuzzyMatch.catNo : (bestFuzzyMatch.desc ? bestFuzzyMatch.desc : (matchCode !== 'NA' ? matchCode : ""));
+                  let numsNew = String(strNew).match(/\d+/g)?.join(',') || '';
+                  let numsOld = String(strOld).match(/\d+/g)?.join(',') || '';
+                  
+                  // 【規則 2】: 數字敏感度作為第二防線 (只要數字不同直接判定為不同物品)
+                  if (numsNew !== numsOld && numsNew !== "" && numsOld !== "") {
+                      isNumberMismatch = true;
                   }
               }
-          }
-          if (!foundExisting) {
-              try {
-                  await addDoc(collection(db, "master_items"), { catNo: catNo, desc: desc, code: haCode, uom: uom });
-                  masterItemsData.push({ id: "temp_" + Date.now(), catNo: catNo, desc: desc, code: haCode, uom: uom });
-              } catch(e) {}
-          }
 
-          let finalItemName = (haCode && haCode !== "NA") ? haCode : [catNo, desc].filter(Boolean).join(" | ");
-          if (["7", "8", "9"].includes(String(finalItemName).trim())) continue;
-          let itemObj = { item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, category: selectedCategory };
-          let openDate = `${selectedYear}-04-01`; 
-
-          // -- 修正: 自動繼承歷史結餘，避免上傳新年度時導致結餘錯誤 --
-          let itemKey = (haCode && haCode !== "NA") ? haCode : `${catNo}|${desc}`;
-          let simulatedBal = 0;
-          let itemTxs = transactionsData.filter(t => {
-              let tk = (t.haCode && t.haCode !== "NA") ? t.haCode : `${t.catNo}|${t.desc}`;
-              return tk === itemKey && (t.category || 'Consumable') === selectedCategory;
-          });
-          itemTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
-          itemTxs.forEach(t => {
-              if (t.date < openDate) {
-                  let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0;
-                  if (t.type === "Opening Balance") simulatedBal = q;
-                  else if (t.type === "In") simulatedBal += (q + adj);
-                  else if (t.type === "Out") { simulatedBal -= q; simulatedBal += adj; }
+              if (isNumberMismatch) {
+                  // 【規則 2】: 數字不同，直接新增為新item (自動加入Master)
+                  rowData.isNewMaster = true; 
+                  readyToProcessItems.push(rowData);
+              } else if (highestSim >= 0.75 && highestSim < 1.0) {
+                  // 【規則 3】: 落入 75% 相似門檻，進入批次待確認列表
+                  pendingReviewItems.push({ newRow: rowData, suggestedMatch: bestFuzzyMatch, sim: highestSim, numberMismatch: false });
+              } else {
+                  // 完全不相似的新物品 (<75%) (自動加入Master)
+                  rowData.isNewMaster = true; 
+                  readyToProcessItems.push(rowData);
               }
-          });
+          }
+        }
 
-          let currentBal = simulatedBal;
-          let hasOpenBalInExcel = false;
-          if (idxOpenBal !== -1 && cells.length > idxOpenBal && cells[idxOpenBal] !== undefined && String(cells[idxOpenBal]).trim() !== "") {
-              let oVal = String(cells[idxOpenBal]).replace(/,/g, '').trim(); 
-              if (!isNaN(parseFloat(oVal))) { currentBal = parseFloat(oVal); hasOpenBalInExcel = true; }
+        // 呼叫批次確認列表 Modal
+        if (pendingReviewItems.length > 0) {
+            document.body.removeChild(loadingDiv); // 暫停並隱藏載入提示
+            let reviewResults = await window.showBatchReviewModal(pendingReviewItems);
+            
+            for (let i = 0; i < pendingReviewItems.length; i++) {
+                let action = reviewResults[i];
+                let item = pendingReviewItems[i];
+                if (action === 'A') { 
+                    // 【選項 A】視為既有 Master 物品 (合併)
+                    let m = item.suggestedMatch;
+                    let mCode = m.code !== undefined ? m.code : m.haCode;
+                    item.newRow.haCode = (mCode && mCode !== 'NA') ? mCode : item.newRow.haCode;
+                    item.newRow.catNo = m.catNo || item.newRow.catNo;
+                    item.newRow.desc = m.desc || item.newRow.desc;
+                    readyToProcessItems.push(item.newRow);
+                } else if (action === 'B') { 
+                    // 【選項 B】視為全新物品 (寫入資料庫並自動加入 Master List)
+                    item.newRow.isNewMaster = true; 
+                    readyToProcessItems.push(item.newRow);
+                } else if (action === 'C') { 
+                    // 【選項 C】不需要紀錄 (直接跳過)
+                }
+            }
+            document.body.appendChild(loadingDiv); // 恢復載入提示
+        }
+
+        let importCount = 0;
+        
+// 開始將篩選後的資料寫入資料庫
+        for (let row of readyToProcessItems) {
+          let { catNo, desc, haCode, currentBal, cells, isNewMaster, isExcelOpenBalEmpty, uomVal } = row;
+
+          // 若標記為全新物品(選項B或數字不同)，將其寫入 Master List (已存在則報錯忽略避免卡死)
+          if (isNewMaster) {
+              try { await addDoc(collection(db, "master_items"), { catNo: catNo||"", desc: desc||"", code: haCode||"NA", uom: uomVal || "", category: selectedCategory }); } catch(err){}
           }
           
-          let insertOpenBal = hasOpenBalInExcel || itemTxs.length === 0;
-          if (insertOpenBal && currentBal >= 0 && !isDuplicateTx(openDate, itemObj, "Opening Balance", currentBal)) {
-             await addDoc(collection(db, "transactions"), { 
-               category: selectedCategory, date: openDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-               type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00") 
-             });
+          let finalItemName = [catNo, desc, haCode !== 'NA' ? haCode : ""].filter(Boolean).join(' | ');
+          if (!finalItemName) finalItemName = catNo || desc || haCode;
+          let itemObj = { item: finalItemName, desc: desc, catNo: catNo, haCode: haCode, category: selectedCategory };
+
+          // ===== 新增邏輯：2027 年度起，若 Excel 的期初結餘空白，則自動承接系統上一年度結餘 =====
+          if (selectedYear >= 2027 && isExcelOpenBalEmpty) {
+              let cutoffDate = `${selectedYear}-03-31`; // 取上年度最後一天
+              let targetKey = getItemBalanceKey({ item: finalItemName, category: selectedCategory, catNo: catNo, desc: desc, haCode: haCode });
+              let prevBal = 0;
+              
+              transactionsData.forEach(t => {
+                  if (t.date <= cutoffDate && (t.category || 'Consumable') === selectedCategory) {
+                      let tKey = getItemBalanceKey(t);
+                      if (tKey === targetKey) {
+                          let q = parseFloat(t.qty) || 0;
+                          let adj = parseFloat(t.sysAdjust) || 0;
+                          if (t.type === 'Opening Balance') { prevBal = q; }
+                          else if (t.type === 'In') { prevBal += (q + adj); }
+                          else if (t.type === 'Out') { prevBal -= q; prevBal += adj; }
+                      }
+                  }
+              });
+              currentBal = prevBal; // 直接將上年度系統結餘作為今年的 opening balance
+          }
+          // ======================================================================================
+
+// 寫入期初結餘 (Opening Balance)
+          let openDate = `${selectedYear}-04-01`; 
+          let existingOpen = findDuplicateTx(openDate, itemObj, "Opening Balance");
+          // 【修改這裡】：將 currentBal > 0 改為 currentBal >= 0，確保空白(即結餘為0)時也必定會寫入一筆期初結餘
+          if (!existingOpen && currentBal >= 0) {
+             let newTx = {
+                  category: selectedCategory, date: openDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                  type: "Opening Balance", qty: currentBal, remarks: "年度期初結餘", timestamp: new Date(openDate + "T09:00:00")
+              };
+             let docRef = await addDoc(collection(db, "transactions"), newTx);
+             transactionsData.push({ id: docRef.id, ...newTx });
+             importCount++;
+          } else if (existingOpen && existingOpen.qty !== currentBal) {
+             await updateDoc(doc(db, "transactions", existingOpen.id), { qty: currentBal });
+             existingOpen.qty = currentBal;
              importCount++;
           }
 
+          // ===== 循序處理 12 個月份 =====
           for (let m = 0; m < monthBlocks.length; m++) {
             let mIn = parseFloat(String(cells[monthBlocks[m].in] || 0).replace(/,/g, '')) || 0;
             let mOut = parseFloat(String(cells[monthBlocks[m].out] || 0).replace(/,/g, '')) || 0;
             let mBalStr = cells[monthBlocks[m].bal];
+            
             if (mBalStr === undefined || mBalStr === null || String(mBalStr).trim() === "") continue;
-            let mBal = parseFloat(String(mBalStr).replace(/,/g, '')); if (isNaN(mBal)) continue;
+            let mBal = parseFloat(String(mBalStr).replace(/,/g, ''));
+            if (isNaN(mBal)) continue;
 
-            let expectedBal = currentBal + mIn - mOut; let remarksOut = ""; let remarksIn = ""; let sysAdjust = 0;
-            if (expectedBal > mBal) { sysAdjust = -(expectedBal - mBal); remarksOut = "系統調整 (數量短缺/過期掉棄)"; } 
-            else if (expectedBal < mBal) { sysAdjust = mBal - expectedBal; remarksIn = "系統調整 (數量增加)"; }
+            let expectedBal = currentBal + mIn - mOut;
+            let remarksOut = ""; let remarksIn = "";
+            
+            if (expectedBal > mBal) {
+                let diff = expectedBal - mBal; mOut += diff; remarksOut = "系統調整 (數量短缺/過期掉棄)";
+            } else if (expectedBal < mBal) {
+                let diff = mBal - expectedBal; mIn += diff; remarksIn = "系統調整 (數量增加)";
+            }
 
             let monthNum = m + 4; let calcYear = selectedYear;
             if (monthNum > 12) { monthNum -= 12; calcYear += 1; }
             let importDate = new Date(calcYear, monthNum, 0).toISOString().split('T')[0];
 
-            if (mIn > 0 || sysAdjust > 0) {
-                let adj = sysAdjust > 0 ? sysAdjust : 0;
-                if (!isDuplicateTx(importDate, itemObj, "In", mIn, adj)) {
-                    await addDoc(collection(db, "transactions"), { 
-                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                      type: "In", qty: mIn, sysAdjust: adj, remarks: (sysAdjust > 0 ? remarksIn : ""), timestamp: new Date(importDate + "T10:00:00") 
-                    });
+            if (mIn > 0) {
+                let existingIn = findDuplicateTx(importDate, itemObj, "In");
+                if (!existingIn) {
+                    let newTx = {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "In", qty: mIn, remarks: remarksIn, timestamp: new Date(importDate + "T10:00:00")
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
+                    importCount++;
+                } else if (existingIn.qty !== mIn) {
+                    await updateDoc(doc(db, "transactions", existingIn.id), { qty: mIn, remarks: remarksIn });
+                    existingIn.qty = mIn; existingIn.remarks = remarksIn;
                     importCount++;
                 }
             }
-            if (mOut > 0 || sysAdjust < 0) {
-                let adj = sysAdjust < 0 ? sysAdjust : 0;
-                if (!isDuplicateTx(importDate, itemObj, "Out", mOut, adj)) {
-                    await addDoc(collection(db, "transactions"), { 
-                      category: selectedCategory, date: importDate, item: finalItemName, desc: desc, cssd: cssd, uom: uom, haCode: haCode, catNo: catNo, 
-                      type: "Out", qty: mOut, sysAdjust: adj, remarks: (sysAdjust < 0 ? remarksOut : ""), timestamp: new Date(importDate + "T11:00:00") 
-                    });
+            if (mOut > 0) {
+                let existingOut = findDuplicateTx(importDate, itemObj, "Out");
+                if (!existingOut) {
+                    let newTx = {
+                        category: selectedCategory, date: importDate, item: finalItemName, desc: desc, catNo: catNo, haCode: haCode,
+                        type: "Out", qty: mOut, remarks: remarksOut, timestamp: new Date(importDate + "T11:00:00")
+                    };
+                    let docRef = await addDoc(collection(db, "transactions"), newTx);
+                    transactionsData.push({ id: docRef.id, ...newTx });
+                    importCount++;
+                } else if (existingOut.qty !== mOut) {
+                    await updateDoc(doc(db, "transactions", existingOut.id), { qty: mOut, remarks: remarksOut });
+                    existingOut.qty = mOut; existingOut.remarks = remarksOut;
                     importCount++;
                 }
             }
             currentBal = mBal; 
           }
         }
+        // ======= 修改區塊二結束 =======
+
         document.body.removeChild(loadingDiv);
-        alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增 ${importCount} 筆交易紀錄。`); loadStockData();
-      } catch (err) { console.error(err); if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); alert("❌ 解析或匯入 Excel 失敗"); }
+        alert(`🎉 ${selectedYear}-${selectedYear+1} 年度庫存數據匯入成功！\n共新增或更新 ${importCount} 筆交易紀錄。\n(所有物品的系統結餘已 100% 強制對齊 Excel)`);
+        loadStockData();
+      } catch (err) {
+        console.error(err); 
+        if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); 
+        alert("❌ 解析或匯入 Excel 失敗，請確認檔案格式是否正確。");
+      }
     }
 
     window.handleExcelFileUpload = function(e) {
@@ -772,14 +1325,54 @@ if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
       });
     }
 
-    window.loadStockData = async function() {
+window.loadStockData = async function() {
       const querySnapshot = await getDocs(query(collection(db, "transactions"), orderBy("timestamp", "desc")));
       transactionsData = []; 
       querySnapshot.forEach((docSnap) => { const data = docSnap.data(); data.id = docSnap.id; transactionsData.push(data); });
       renderYearButtons(); filterHistory(); 
-      if (document.getElementById('view-expiry').classList.contains('active')) renderExpiryTable();
+      let viewExpiry = document.getElementById('view-expiry');
+      if (viewExpiry && viewExpiry.classList.contains('active')) renderExpiryTable();
+      
+      // 觸發主頁面過期警報更新
+      updateMainMenuExpiryAlert();
     }
 
+    window.updateMainMenuExpiryAlert = function() {
+        let today = new Date(); today.setHours(0,0,0,0);
+        let redCount = 0;
+        let darkOrangeCount = 0;
+        
+        let expiryData = transactionsData.filter(t => t.expiryDate && t.expiryDate.trim() !== "");
+        expiryData.forEach(t => {
+            let expDate = new Date(t.expiryDate); expDate.setHours(0,0,0,0);
+            let diffDays = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
+            if (diffDays <= 60) {
+                redCount++; // 過期或2個月內 (紅色)
+            } else if (diffDays <= 90) {
+                darkOrangeCount++; // 3個月內 (深橙色)
+            }
+        });
+        
+        let alertContainer = document.getElementById('mainMenuExpiryAlert');
+        if (!alertContainer) {
+            alertContainer = document.createElement('div');
+            alertContainer.id = 'mainMenuExpiryAlert';
+            alertContainer.style.cssText = "width: 100%; text-align: center; margin-bottom: 20px;";
+            // 插入至主選單最上方
+            let menu = document.getElementById('mainMenu');
+            if (menu) menu.insertBefore(alertContainer, menu.firstChild);
+        }
+        
+        let html = "";
+        if (redCount > 0) {
+            html += `<div style="background-color: #fadbd8; color: #c0392b; padding: 10px; margin: 5px; border-radius: 5px; font-weight: bold; display: inline-block; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="showView('view-expiry')">🚨 警告：有 ${redCount} 項物品已過期或將於 2 個月內過期！</div>`;
+        }
+        if (darkOrangeCount > 0) {
+            html += `<div style="background-color: #fdebd0; color: #e65100; padding: 10px; margin: 5px; border-radius: 5px; font-weight: bold; display: inline-block; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" onclick="showView('view-expiry')">⚠️ 注意：有 ${darkOrangeCount} 項物品將於 3 個月內過期！</div>`;
+        }
+        alertContainer.innerHTML = html;
+    }
+    
     window.setFinancialYear = function(startYear) { document.getElementById('startDate').value = `${startYear}-04-01`; document.getElementById('endDate').value = `${startYear + 1}-03-31`; filterHistory(); }
     
     window.clearDateRange = function() { 
@@ -796,18 +1389,29 @@ if (!catNo && !desc && (!haCode || haCode === "NA")) continue;
       
       let baseData = transactionsData.filter(t => (t.category || 'Consumable') === currentQueryCategory);
       
-      let runningBalData = [...baseData].sort((a, b) => new Date(a.date) - new Date(b.date));
-      let itemBalances = {};
-      
-      runningBalData.forEach(t => {
-          let k = (t.haCode && t.haCode !== "NA") ? t.haCode : `${t.catNo}|${t.desc}`;
-          if (!itemBalances[k]) itemBalances[k] = 0;
-          let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
-          if (t.type === "Opening Balance") { itemBalances[k] = q; } 
-          else if (t.type === "In") { itemBalances[k] += (q + adj); } 
-          else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
-          t.runningBalance = Math.round(itemBalances[k] * 1000) / 1000;
+let runningBalData = [...baseData].sort((a, b) => {
+          let d1 = new Date(a.date).getTime(); let d2 = new Date(b.date).getTime();
+          if (d1 !== d2) return d1 - d2;
+          
+          let t1 = a.timestamp ? (a.timestamp.seconds ? a.timestamp.seconds * 1000 : new Date(a.timestamp).getTime()) : 0;
+          let t2 = b.timestamp ? (b.timestamp.seconds ? b.timestamp.seconds * 1000 : new Date(b.timestamp).getTime()) : 0;
+          if (t1 !== t2) return t1 - t2;
+          
+          if (a.type === "Opening Balance" && b.type !== "Opening Balance") return -1;
+          if (b.type === "Opening Balance" && a.type !== "Opening Balance") return 1;
+          return 0;
       });
+let itemBalances = {};
+      
+runningBalData.forEach(t => {
+      let k = getItemBalanceKey(t);
+      if (!itemBalances[k]) itemBalances[k] = 0;
+      let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
+      if (t.type === "Opening Balance") { itemBalances[k] = q; } 
+      else if (t.type === "In") { itemBalances[k] += (q + adj); } 
+      else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
+      t.runningBalance = Math.round(itemBalances[k] * 1000) / 1000;
+  });
 
 if (searchText !== "") {
         let searchLower = searchText.toLowerCase();
@@ -817,8 +1421,24 @@ if (searchText !== "") {
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
                 let fieldsToMatch = [ mCode.toLowerCase(), mCat.toLowerCase(), mDesc.toLowerCase(), String(t.item).toLowerCase() ];
-                return searchParts.every(part => { if (!part) return true; return fieldsToMatch.some(f => f.includes(part)); });
-            });
+                
+                // 1. 完全包含：所有 searchParts 都能在 transaction 的欄位中找到
+                let matchAll = searchParts.every(part => { 
+                    if (!part) return true; 
+                    return fieldsToMatch.some(f => f.includes(part)); 
+                });
+                
+                // 2. 允許簡寫或缺少分類也能匹配成功：
+                // 如果交易紀錄中只打了 "pouches"，但被選項的 "s20 / pc400 clear pouches" 包含，也算作符合
+                let matchPartial = fieldsToMatch.some(f => {
+                    if (f.trim().length <= 2) return false;
+                    if (f === 'consumable' || f === 'drape') return false;
+                    return searchParts.some(part => part && part.includes(f));
+                });
+                
+                return matchAll || matchPartial;
+});
+        
         } else {
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
@@ -847,13 +1467,28 @@ if (searchText !== "") {
       finalDisplayData = finalDisplayData.reverse(); 
       window.currentQueryData = finalDisplayData; 
 
-      let balanceHtml = "";
+let balanceHtml = "";
       if (searchText !== "") {
         let balanceColor = currentBal < 0 ? "#e74c3c" : "#27ae60";
         let dateText = startDate && endDate ? `${startDate} 至 ${endDate}` : startDate ? `${startDate} 至今` : endDate ? `截至 ${endDate}` : "所有紀錄時間";
+        
+        // 新增：動態抓取該物品的 UOM
+        let itemUOM = "未設定";
+        if (finalDisplayData.length > 0 && finalDisplayData[0].uom && finalDisplayData[0].uom !== "-" && finalDisplayData[0].uom !== "NA") {
+            itemUOM = finalDisplayData[0].uom;
+        } else {
+            let searchLower = searchText.toLowerCase().trim();
+            for (let m of masterItemsData) {
+                if ( ((m.code || "").toLowerCase().includes(searchLower) || (m.catNo || "").toLowerCase().includes(searchLower) || (m.desc || "").toLowerCase().includes(searchLower)) && m.uom && m.uom !== "-" && m.uom !== "NA" ) {
+                    itemUOM = m.uom;
+                    break;
+                }
+            }
+        }
+
         balanceHtml = `📦 物品 <strong>"${searchText}"</strong> 的統計：<br>
                        <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 6px;">
-                         📅 期間 (${dateText}) ➜ 期初結餘(Opening): <b>${totalOpening}</b> | 期間入庫(In): <b>${totalIn}</b> | 期間出庫(Out): <b>${totalOut}</b>
+                         📅 期間 (${dateText}) ➜ 期初結餘(Opening): <b>${totalOpening}</b> | 期間入庫(In): <b>${totalIn}</b> | 期間出庫(Out): <b>${totalOut}</b> | 單位(UOM): <b style="color:#2980b9;">${itemUOM}</b>
                        </div>
                        <span style="font-size: 1.2rem; margin-top:10px; display:inline-block;">期末系統結餘 (Latest Balance): <strong style="color:${balanceColor}; font-size: 1.6rem;">${currentBal}</strong></span>`;
       }
@@ -899,9 +1534,10 @@ if (searchText !== "") {
         link.click();
     };
 
-    window.renderHistoryTable = function(data) {
+window.renderHistoryTable = function(data) {
       const tbody = document.getElementById('historyTbody'); tbody.innerHTML = "";
-      if (data.length === 0) { tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>尚未有任何紀錄或查無資料</td></tr>"; return; }
+      // 修正：因為多加了一個 UOM 欄位，所以 colspan 改為 11
+      if (data.length === 0) { tbody.innerHTML = "<tr><td colspan='11' style='text-align:center;'>尚未有任何紀錄或查無資料</td></tr>"; return; }
       
       data.forEach(t => {
         let tr = document.createElement('tr'); tr.id = `row-${t.id}`;
@@ -910,6 +1546,21 @@ if (searchText !== "") {
         let balDisplay = t.runningBalance !== undefined ? t.runningBalance : "-";
         
         let { mCat, mDesc, mCode } = extractItemDetails(t);
+        
+        // 新增：比對與抓取該紀錄的 UOM
+        let currentUOM = t.uom && t.uom !== "-" && t.uom !== "NA" ? t.uom : "";
+        if(!currentUOM) {
+            let foundMaster = masterItemsData.find(m => {
+                let mc = (m.code || "").toLowerCase().replace(/[-_\s()]/g, '');
+                let md = (m.desc || "").toLowerCase().replace(/[-_\s()]/g, '');
+                let searchCode = mCode.toLowerCase().replace(/[-_\s()]/g, '');
+                let searchDesc = mDesc.toLowerCase().replace(/[-_\s()]/g, '');
+                return (searchCode && mc === searchCode) || (searchDesc && md === searchDesc);
+            });
+            if(foundMaster && foundMaster.uom) currentUOM = foundMaster.uom;
+        }
+        let displayUOM = currentUOM || "-";
+
         mCode = mCode.replace(/\n/g, '<br>'); mCat = mCat.replace(/\n/g, '<br>'); mDesc = mDesc.replace(/\n/g, '<br>');
         
         let extraInfo = []; if(t.packSize) extraInfo.push(`Pack: ${t.packSize}`); if(t.lotNo) extraInfo.push(`Lot: ${t.lotNo}`); if(t.poNo) extraInfo.push(`PO: ${t.poNo}`); if(t.expiryDate) extraInfo.push(`Exp: ${t.expiryDate}`);
@@ -917,6 +1568,7 @@ if (searchText !== "") {
         tr.innerHTML = `
           <td>${t.date}</td><td><strong>${mCat || '-'}</strong></td><td title="資料庫原始數據: ${t.item}">${mDesc || '-'}</td>
           <td>${mCode}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td>${t.qty}</td>
+          <td style="color: #2980b9; font-weight: bold;">${displayUOM}</td>
           <td style="font-size: 0.85rem; color: #555;">${extraInfo.length > 0 ? extraInfo.join('<br>') : '<span style="color:#ccc;">-</span>'}</td>
           <td style="font-weight: bold; background-color: #fdfad5;">${balDisplay}</td><td style="${remarkStyle}">${remarkText}</td>
           <td><button class="action-btn edit-btn" onclick="editRecord('${t.id}')">✏️</button><button class="action-btn del-btn" onclick="deleteRecord('${t.id}')">❌</button></td>
@@ -1011,18 +1663,26 @@ if (searchText !== "") {
         let alarmText = "";
         let bgStyle = "";
 
-        if (diffDays < 0) {
-            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+if (diffDays < 0) {
+            dateStyle = "color:#c0392b; font-weight:bold;"; // 紅色
             alarmText = "<br><span style='font-size:0.8rem;'>已過期</span>";
             bgStyle = "background-color: #fadbd8;";
         } else if (diffDays <= 60) {
-            dateStyle = "color:#c0392b; font-weight:bold;"; // Red
+            dateStyle = "color:#c0392b; font-weight:bold;"; // 紅色
             alarmText = "<br><span style='font-size:0.8rem;'>🚨 2個月內</span>";
             bgStyle = "background-color: #fadbd8;";
-        } else if (diffDays <= 90) {
-            dateStyle = "color:#d35400; font-weight:bold;"; // Orange
+} else if (diffDays <= 90) {
+            dateStyle = "color:#e65100; font-weight:bold;"; // 深橙色
             alarmText = "<br><span style='font-size:0.8rem;'>⚠️ 3個月內</span>";
-            bgStyle = "background-color: #fcf3cf;";
+            bgStyle = "background-color: #fdebd0;";
+        } else if (diffDays <= 180) { // 新增：介於 3個月 (90天) 到 6個月 (180天) 為黃色
+            dateStyle = "color:#d68910; font-weight:bold;"; // 較深的黃色確保白底上能看清
+            alarmText = "<br><span style='font-size:0.8rem;'>🟡 6個月內</span>";
+            bgStyle = "background-color: #fef9e7;";
+        } else { // 新增：6個月以上顯示為綠色
+            dateStyle = "color:#27ae60; font-weight:bold;"; // 綠色
+            alarmText = "<br><span style='font-size:0.8rem;'>✅ 6個月以上</span>";
+            bgStyle = "background-color: #eafaf1;";
         }
 
         let typeColor = t.type === "In" ? "#27ae60" : t.type === "Out" ? "#e74c3c" : "#8e44ad";
@@ -1051,39 +1711,126 @@ if (searchText !== "") {
     }
 
     // --- Master List 總表 CRUD 功能 ---
+    window.toggleAllMaster = function(checkbox) {
+        document.querySelectorAll('.master-checkbox').forEach(cb => cb.checked = checkbox.checked);
+    };
+
+    window.batchUpdateCategory = async function(newCategory) {
+        let selected = Array.from(document.querySelectorAll('.master-checkbox:checked')).map(cb => ({
+            id: cb.dataset.id, key: cb.dataset.key, isMaster: cb.dataset.ismaster === 'true',
+            cat: cb.dataset.cat, desc: cb.dataset.desc, code: cb.dataset.code
+        }));
+        
+        if (selected.length === 0) { alert("請先勾選要歸類的物品！"); return; }
+        if (!confirm(`確定要將選中的 ${selected.length} 個物品歸類為 ${newCategory} 嗎？\n(這將會同步更新所有相關的歷史紀錄)`)) return;
+
+        document.body.style.cursor = 'wait';
+        try {
+            for (let item of selected) {
+                if (item.isMaster && item.id) {
+                    await updateDoc(doc(db, "master_items", item.id), { category: newCategory });
+                } else {
+                    await addDoc(collection(db, "master_items"), { 
+                        catNo: item.cat !== '-' ? item.cat : '', desc: item.desc !== '-' ? item.desc : '', 
+                        code: item.code !== '-' ? item.code : 'NA', uom: '', category: newCategory
+                    });
+                }
+
+                let matchingTxs = transactionsData.filter(t => {
+                    let { mCat, mDesc, mCode } = extractItemDetails(t);
+                    return mCat === item.cat && mDesc === item.desc && (mCode === item.code || (mCode === 'NA' && item.code === '-'));
+                });
+                
+                for (let t of matchingTxs) {
+                    if (t.category !== newCategory) await updateDoc(doc(db, "transactions", t.id), { category: newCategory });
+                }
+            }
+            alert(`✅ 成功歸類 ${selected.length} 個物品為 ${newCategory}！`);
+            await loadMasterItems(); await loadStockData(); renderMasterList();
+        } catch(e) { console.error(e); alert("歸類失敗"); }
+        document.body.style.cursor = 'default';
+    };
+
+// --- Master List 的分類狀態與 Location 下拉清單建立 ---
+    window.currentMasterCategory = 'All'; 
+    window.setMasterCategory = function(cat) {
+        window.currentMasterCategory = cat;
+        renderMasterList();
+    };
+
+    if (!document.getElementById('locationList')) {
+        const datalist = document.createElement('datalist');
+        datalist.id = 'locationList';
+        // 在這裡加入你希望出現的下拉建議選項，可以隨時新增
+        datalist.innerHTML = `<option value="LG01"></option><option value="LG02"></option>`; 
+        document.body.appendChild(datalist);
+    }
+
     window.renderMasterList = function() {
         const tbody = document.getElementById('masterTbody');
         tbody.innerHTML = "";
-        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
+        
+        const table = tbody.parentElement;
+        
+        // --- 注入 UI 篩選按鈕 ---
+        if (!document.getElementById('masterCategoryFilter')) {
+            const filterDiv = document.createElement('div');
+            filterDiv.id = 'masterCategoryFilter';
+            filterDiv.style.marginBottom = '15px';
+            table.parentNode.insertBefore(filterDiv, table);
+        }
+        
+        const filterDiv = document.getElementById('masterCategoryFilter');
+        filterDiv.innerHTML = `
+            <button onclick="setMasterCategory('All')" style="background:${window.currentMasterCategory === 'All' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'All' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px; margin-right:5px;">全部 (All)</button>
+            <button onclick="setMasterCategory('Drape')" style="background:${window.currentMasterCategory === 'Drape' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Drape' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px; margin-right:5px;">Drape 類別</button>
+            <button onclick="setMasterCategory('Consumable')" style="background:${window.currentMasterCategory === 'Consumable' ? '#34495e' : '#bdc3c7'}; color:${window.currentMasterCategory === 'Consumable' ? 'white' : '#2c3e50'}; padding:8px 15px; border:none; cursor:pointer; border-radius:4px;">Consumable 類別</button>
+        `;
 
+        const thead = table.querySelector('thead tr');
+        if (thead && !thead.dataset.patched) {
+            thead.innerHTML = `<th style="width: 40px; text-align: center;"><input type="checkbox" onchange="toggleAllMaster(this)" title="全選"></th>` + thead.innerHTML;
+            
+// 動態插入 Location 及 Remark 標題在最後一個欄位(操作)之前
+            let ths = thead.querySelectorAll('th');
+            if(ths.length > 0) {
+                let locTh = document.createElement('th');
+                locTh.innerText = 'Location';
+                thead.insertBefore(locTh, ths[ths.length - 1]);
+
+                let remTh = document.createElement('th');
+                remTh.innerText = 'Remark';
+                thead.insertBefore(remTh, ths[ths.length - 1]);
+            }
+            thead.dataset.patched = "true";
+        }
+
+        let searchText = document.getElementById('searchMaster').value.trim().toLowerCase();
         let allItemsMap = new Map();
         
         masterItemsData.forEach(m => {
             let key = `${(m.catNo || '').trim()}|${(m.code || '').trim()}|${(m.desc || '').trim()}`;
-            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', category: 'Master', isMaster: true });
+            // 抓取 location 數據
+            allItemsMap.set(key, { id: m.id, cat: m.catNo || '-', desc: m.desc || '-', code: m.code !== 'NA' ? m.code : '-', uom: m.uom || '-', remark: m.remark || '', location: m.location || '', category: m.category || 'Master', isMaster: true });
         });
 
         transactionsData.forEach(t => {
             let { mCat, mDesc, mCode } = extractItemDetails(t);
             let key = `${mCat.trim()}|${mCode.trim()}|${mDesc.trim()}`;
             if(!allItemsMap.has(key)) {
-                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', category: t.category || 'Consumable', isMaster: false });
+                allItemsMap.set(key, { key: key, cat: mCat || '-', desc: mDesc || '-', code: mCode !== 'NA' ? mCode : '-', uom: t.uom || '-', location: '', category: t.category || 'Consumable', isMaster: false });
             }
         });
 
         let displayData = Array.from(allItemsMap.values());
-
-        if(searchText) {
-            displayData = displayData.filter(d =>
-                d.cat.toLowerCase().includes(searchText) ||
-                d.desc.toLowerCase().includes(searchText) ||
-                d.code.toLowerCase().includes(searchText)
-            );
+        
+        // 根據 UI 按鈕進行過濾
+        if(window.currentMasterCategory !== 'All') {
+            displayData = displayData.filter(d => d.category === window.currentMasterCategory);
         }
 
-        if(displayData.length === 0) {
-            tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;'>無相符資料</td></tr>"; return;
-        }
+        if(searchText) displayData = displayData.filter(d => d.cat.toLowerCase().includes(searchText) || d.desc.toLowerCase().includes(searchText) || d.code.toLowerCase().includes(searchText));
+        if(displayData.length === 0) { tbody.innerHTML = "<tr><td colspan='8' style='text-align:center;'>無相符資料</td></tr>"; return; }
 
         displayData.forEach(d => {
             let tr = document.createElement('tr');
@@ -1095,17 +1842,21 @@ if (searchText !== "") {
             
             let actionHtml = '';
             if (d.isMaster) {
-                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button>
-                              <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
+                actionHtml = `<button class="action-btn edit-btn" onclick="editMasterItem('${d.id}')">✏️</button> <button class="action-btn del-btn" onclick="deleteMasterItem('${d.id}')">❌</button>`;
             } else {
                 actionHtml = `<button class="action-btn" style="background:#3498db;" onclick="addMissingToMaster('${d.cat.replace(/'/g, "\\'")}', '${d.desc.replace(/'/g, "\\'")}', '${d.code.replace(/'/g, "\\'")}', '${d.uom.replace(/'/g, "\\'")}')">➕ 加入總表</button>`;
             }
 
-            tr.innerHTML = `<td><span style="${catStyle}">${d.category}</span></td>
+            let checkboxHtml = `<input type="checkbox" class="master-checkbox" data-id="${d.id || ''}" data-key="${d.key || ''}" data-ismaster="${d.isMaster}" data-cat="${d.cat}" data-desc="${d.desc}" data-code="${d.code}">`;
+
+            // 新增 d.location 在畫面上
+            tr.innerHTML = `<td style="text-align: center;">${checkboxHtml}</td>
+                            <td><span style="${catStyle}">${d.category}</span></td>
                             <td style="font-weight:bold;">${d.cat}</td>
                             <td>${d.desc}</td>
                             <td>${d.code}</td>
                             <td>${d.uom}</td>
+                            <td style="font-weight:bold; color:#2980b9;">${d.location}</td>
                             <td>${actionHtml}</td>`;
             tbody.appendChild(tr);
         });
@@ -1118,7 +1869,7 @@ if (searchText !== "") {
         let uom = document.getElementById('newMasterUom').value.trim();
         if(!catNo && !desc) { alert("請至少填寫 Cat no 或 Description！"); return; }
         try {
-            await addDoc(collection(db, "master_items"), { catNo, desc, code, uom });
+            await addDoc(collection(db, "master_items"), { catNo, desc, code, uom, location: '' });
             alert("🎉 成功手動新增物品至總表！");
             document.getElementById('newMasterCatNo').value = '';
             document.getElementById('newMasterDesc').value = '';
@@ -1133,12 +1884,15 @@ if (searchText !== "") {
         const item = masterItemsData.find(m => m.id === id);
         if(!item) return;
         const tr = document.getElementById(`master-row-${id}`);
+        // 這裡的 Location input 加入了 list="locationList"，會自動觸發剛才建立的下拉選單
         tr.innerHTML = `
             <td><span style="background:#f39c12;color:white;padding:3px 8px;border-radius:4px;">Master</span></td>
             <td><input type="text" id="edit-m-cat-${id}" value="${item.catNo || ''}" class="inline-edit"></td>
             <td><input type="text" id="edit-m-desc-${id}" value="${item.desc || ''}" class="inline-edit" style="width: 95%;"></td>
             <td><input type="text" id="edit-m-code-${id}" value="${item.code === 'NA' ? '' : item.code}" class="inline-edit"></td>
-            <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 80px;"></td>
+            <td><input type="text" id="edit-m-uom-${id}" value="${item.uom || ''}" class="inline-edit" style="width: 60px;"></td>
+            <td><input type="text" id="edit-m-loc-${id}" value="${item.location || ''}" class="inline-edit" list="locationList" style="width: 70px;" placeholder="LG01"></td>
+            <td><input type="text" onchange="updateMasterRemark('${item.id}', this.value)" value="${item.remark || ''}" style="width: 90%; border: 1px solid #ccc; border-radius: 3px; padding: 4px;"></td>
             <td>
                 <button class="action-btn save-btn" onclick="saveMasterItem('${id}')">💾</button>
                 <button class="action-btn cancel-btn" onclick="renderMasterList()">取消</button>
@@ -1151,9 +1905,10 @@ if (searchText !== "") {
         const desc = document.getElementById(`edit-m-desc-${id}`).value.trim();
         const code = document.getElementById(`edit-m-code-${id}`).value.trim() || "NA";
         const uom = document.getElementById(`edit-m-uom-${id}`).value.trim();
+        const location = document.getElementById(`edit-m-loc-${id}`).value.trim();
 
         try {
-            await updateDoc(doc(db, "master_items", id), { catNo, desc, code, uom });
+            await updateDoc(doc(db, "master_items", id), { catNo, desc, code, uom, location });
             await loadMasterItems();
             renderMasterList();
         } catch(e) { console.error(e); alert("更新失敗"); }
@@ -1265,30 +2020,78 @@ if (searchText !== "") {
       } catch (err) { console.error(err); document.body.removeChild(loadingDiv); alert("❌ 匯入過程發生錯誤"); }
     };
 
-    window.onload = () => {
+window.onload = () => {
       loadMasterItems().then(() => { loadStockData(); });
-      const theadTr = document.getElementById('purchaseTheadTr');
-      columns.forEach(col => { let th = document.createElement('th'); th.innerText = col; theadTr.appendChild(th); });
-      let thStatus = document.createElement('th'); thStatus.innerText = "狀態"; theadTr.appendChild(thStatus);
-
-      document.getElementById('purchaseTable').addEventListener('paste', handleExcelPaste);
-      if (document.getElementById('masterPasteArea')) document.getElementById('masterPasteArea').addEventListener('paste', handleMasterPaste);
-      if (document.getElementById('stockPasteArea')) document.getElementById('stockPasteArea').addEventListener('paste', handleStockExcelPaste);
-      if (document.getElementById('excelFileInput')) document.getElementById('excelFileInput').addEventListener('change', handleExcelFileUpload);
       
-      document.getElementById('qty').addEventListener('input', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
-      document.getElementById('type').addEventListener('change', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+      const theadTr = document.getElementById('purchaseTheadTr');
+      if (theadTr) {
+          columns.forEach(col => { let th = document.createElement('th'); th.innerText = col; theadTr.appendChild(th); });
+          let thStatus = document.createElement('th'); thStatus.innerText = "狀態"; theadTr.appendChild(thStatus);
+      }
+
+      const pTable = document.getElementById('purchaseTable');
+      if (pTable) pTable.addEventListener('paste', handleExcelPaste);
+      
+      const mPaste = document.getElementById('masterPasteArea');
+      if (mPaste) mPaste.addEventListener('paste', handleMasterPaste);
+      
+      const sPaste = document.getElementById('stockPasteArea');
+      if (sPaste) sPaste.addEventListener('paste', handleStockExcelPaste);
+      
+      const fileInput = document.getElementById('excelFileInput');
+      if (fileInput) fileInput.addEventListener('change', handleExcelFileUpload);
+      
+      const qtyEl = document.getElementById('qty');
+      if (qtyEl) qtyEl.addEventListener('input', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
+      
+      const typeEl = document.getElementById('type');
+      if (typeEl) typeEl.addEventListener('change', () => { updateCurrentBalanceDisplay(document.getElementById('item').value); });
     };
   </script>
 
   <style>
+  /* --- 1. 登入視窗圖片樣式 --- */
+.login-header-img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 15px;
+}
+
+/* --- 2. 主選單方塊由左至右滑入動畫 --- */
+@keyframes slideInFromLeft {
+  0% {
+    opacity: 0;
+    transform: translateX(-60px); /* 由左邊 60px 位置開始 */
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0); /* 滑動至原本位置 */
+  }
+}
+
+/* 讓主選單內的方塊套用動畫 */
+#mainMenu .menu-grid > div,
+#mainMenu .card,
+#mainMenu .menu-card {
+  opacity: 0; /* 初始隱藏 */
+  animation: slideInFromLeft 0.5s ease-out forwards;
+}
+
+/* 由左至右依次延遲顯示 (Staggered Animation) */
+#mainMenu .menu-grid > div:nth-child(1), #mainMenu .card:nth-child(1) { animation-delay: 0.1s; }
+#mainMenu .menu-grid > div:nth-child(2), #mainMenu .card:nth-child(2) { animation-delay: 0.25s; }
+#mainMenu .menu-grid > div:nth-child(3), #mainMenu .card:nth-child(3) { animation-delay: 0.4s; }
+#mainMenu .menu-grid > div:nth-child(4), #mainMenu .card:nth-child(4) { animation-delay: 0.55s; }
+#mainMenu .menu-grid > div:nth-child(5), #mainMenu .card:nth-child(5) { animation-delay: 0.7s; }
     :root {
         --color-blue: #3498db; --color-blue-dark: #2980b9;
         --color-purple: #9b59b6; --color-purple-dark: #8e44ad;
         --color-red: #e74c3c; --color-red-dark: #c0392b;
         --color-orange: #f39c12; --color-orange-dark: #d35400;
         --color-green: #2ecc71; --color-green-dark: #27ae60;
-        --color-dark: #34495e; --color-dark-dark: #2c3e50;
+--color-pink: #34495e; --color-pink-dark: #ff69b4;    
     }
 
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
@@ -1390,13 +2193,46 @@ if (searchText !== "") {
     
     .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; align-items: stretch; }
     .grid-2-col > .card { margin-bottom: 0; }
+    /* === 登入畫面樣式開始 === */
+    #login-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #f4f6f9; z-index: 99999;
+      display: flex; justify-content: center; align-items: center;
+      flex-direction: column;
+    }
+    .login-box {
+      background: #fff; padding: 40px; border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 300px;
+    }
+    .login-box h2 { margin-top: 0; color: #2c3e50; margin-bottom: 20px; font-weight: bold; }
+    .login-box input {
+      width: 100%; padding: 12px; margin-bottom: 15px;
+      border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 16px;
+    }
+    .login-box button {
+      width: 100%; padding: 12px; background: #3498db; color: #fff;
+      border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;
+    }
+    .login-box button:hover { background: #2980b9; }
+    .login-error { color: #e74c3c; font-size: 14px; margin-top: 10px; display: none; font-weight: bold; }
+    /* === 登入畫面樣式結束 === */
   </style>
 </head>
 <body>
-
+<!-- === 登入畫面結構開始 === -->
+    <div id="login-overlay">
+      <div class="login-box">
+        <h2>系統登入</h2>
+        <input type="text" id="login-username" placeholder="登入帳號">
+        <input type="password" id="login-password" placeholder="密碼" onkeypress="handleLoginKeyPress(event)">
+        <button onclick="checkLogin()">登入</button>
+        <div id="login-error" class="login-error">帳號或密碼錯誤！</div>
+      </div>
+    </div>
+    <!-- === 登入畫面結構結束 === -->
   <div class="header-bar">
       <button id="backBtn" class="back-btn" onclick="showMainMenu()">🔙 返回主選單</button>
-      <h2 class="main-title">📦 物資總管系統</h2>
+      <h2 class="main-title">📦 IDSS Inventory Management System</h2>
   </div>
 
   <div id="mainMenu" class="main-menu view-section active">
@@ -1420,16 +2256,20 @@ if (searchText !== "") {
       </div>
   </div>
 
-  <div id="loginModal" class="modal-overlay">
-      <div class="modal-content">
-          <h3>🔒 身份驗證</h3>
-          <p style="color: #7f8c8d; font-size: 0.9rem; margin-bottom: 20px;">請輸入管理員帳號與密碼</p>
-          <input type="text" id="adminUser" placeholder="帳戶名稱 (Username)">
-          <input type="password" id="adminPwd" placeholder="密碼 (Password)" onkeydown="if(event.key==='Enter') verifyAdmin()">
-          <button class="btn-primary" onclick="verifyAdmin()">登入系統</button>
-          <button class="action-btn cancel-btn" style="width: 100%; margin-top: 10px; padding: 12px; border-radius: 6px;" onclick="closeLoginModal()">取消</button>
-      </div>
+<div id="loginModal" class="modal" style="display:none;">
+  <div class="modal-content" style="padding: 0 0 20px 0; overflow: hidden;">
+    <!-- 插入圖1作為登入視窗頂部圖片 -->
+    <img src="KMwNT3jqkSHkcIkp.jpg" alt="Login Background" class="login-header-img">
+    
+    <div style="padding: 0 20px;">
+      <h2 style="margin-top:0;">管理員登入</h2>
+      <input type="text" id="adminUser" placeholder="帳戶名稱"><br><br>
+      <input type="password" id="adminPwd" placeholder="密碼"><br><br>
+      <button onclick="verifyAdmin()">登入</button>
+      <button onclick="closeLoginModal()">取消</button>
+    </div>
   </div>
+</div>
 
   <div id="view-add" class="view-section">
       <div class="card" style="max-width: 800px; margin: 0 auto;">
@@ -1585,8 +2425,13 @@ if (searchText !== "") {
             </div>
         </div>
 
+<div style="background:#e8f4f8; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bce0fd; display: flex; gap: 15px; align-items: center;">
+            <span style="font-weight: bold; color: #2980b9;">✅ 批次歸類所選物品：</span>
+            <button class="btn-primary" style="width: auto; background: #34495e;" onclick="batchUpdateCategory('Drape')">📦 歸類為 Drape</button>
+            <button class="btn-primary" style="width: auto; background: #bdc3c7; color: #2c3e50;" onclick="batchUpdateCategory('Consumable')">📦 歸類為 Consumable</button>
+        </div>
         <div class="excel-tip">💡 這裡是系統內所有已被登錄或建立過交易紀錄的 Item 清單。未登錄於總表但有紀錄的物品會提供「加入總表」按鈕。</div>
-        <div class="toolbar" style="justify-content: space-between;">
+<div class="toolbar" style="justify-content: space-between;">
           <div style="flex: 1; min-width: 250px; margin-right: 15px;">
             <input type="text" id="searchMaster" class="search-box" placeholder="輸入 Cat no / Description / Code 查詢..." oninput="renderMasterList()" style="margin-bottom:0;">
           </div>
@@ -1612,6 +2457,10 @@ if (searchText !== "") {
         </div>
         <div class="excel-tip">💡 可以在對應年度的 Excel 中複製多行資料，並點擊下方表格內直接貼上 (Ctrl+V) 進行批量匯入。</div>
         <div class="toolbar">
+<div style="margin-bottom: 15px; display: flex; gap: 10px;">
+    <button class="action-btn" style="background:#34495e; color:white; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Drape')">📦 將勾選項歸類為 Drape</button>
+    <button class="action-btn" style="background:#bdc3c7; color:#2c3e50; padding:10px 15px; font-size:14px; font-weight:bold;" onclick="batchUpdateCategory('Consumable')">🩹 將勾選項歸類為 Consumable</button>
+</div>
           <div>
             <label style="display:inline-block; margin-right:10px;">選擇年度：</label>
             <select id="purchaseYear" onchange="loadPurchaseList()" style="width: auto; display: inline-block;">
@@ -1649,11 +2498,20 @@ if (searchText !== "") {
                   <input type="hidden" id="selectedImportCategory" value="Consumable">
 
                   <select id="importYearSelect" style="width: 100%; padding: 10px; font-weight: bold; font-size: 1rem; border-color: #27ae60; margin-bottom: 15px;">
-                      <option value="2023">2023-2024 年度</option>
-                      <option value="2024">2024-2025 年度</option>
-                      <option value="2025" selected>2025-2026 年度</option>
-                      <option value="2026">2026-2027 年度</option>
-                      <option value="2027">2027-2028 年度</option>
+<option value="2022">2022 年度</option>
+            <option value="2023">2023-24 年度</option>
+            <option value="2024">2024-25 年度</option>
+            <option value="2025">2025-26 年度</option>
+            <option value="2026">2026-27 年度</option>
+            <option value="2027">2027-28 年度</option>
+            <option value="2028">2028-29 年度</option>
+            <option value="2029">2029-30 年度</option>
+            <option value="2030">2030-31 年度</option>
+            <option value="2031">2031-32 年度</option>
+            <option value="2032">2032-33 年度</option>
+            <option value="2033">2033-34 年度</option>
+            <option value="2034">2034-35 年度</option>
+            <option value="2035">2035-36 年度</option>
                   </select>
 
                   <div class="file-upload-box">
@@ -1683,11 +2541,44 @@ if (searchText !== "") {
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem;" onclick="cleanGarbageData()">🧹 清除物品名為 7, 8, 9 的異常數據</button>
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#d35400;" onclick="cleanDuplicates()">🗑️ 掃描並刪除重覆的相同數據</button>
                       <button class="action-btn del-btn" style="padding: 12px; font-size:1rem; background-color:#c0392b;" onclick="deleteAllData()">🚨 清空系統內所有的庫存紀錄</button>
+<button class="btn-primary" style="background-color: #e67e22; margin-bottom: 15px;" onclick="fixSystemBalances()">
+    🛠️ 修正系統結餘運算問題 (重新校準 IN/OUT 結餘)
+</button>
                   </div>
               </div>
           </div>
       </div>
   </div>
+<!-- === 登入驗證腳本開始 === -->
+    <script>
+      function checkLogin() {
+        const user = document.getElementById('login-username').value;
+        const pass = document.getElementById('login-password').value;
+        
+        // 檢查帳號密碼是否相符
+        if (user === 'IDSS' && pass === '22080030') {
+          // 登入成功：隱藏登入層，顯示系統
+          document.getElementById('login-overlay').style.display = 'none';
+          document.getElementById('login-error').style.display = 'none';
+        } else {
+          // 登入失敗：顯示錯誤提示
+          document.getElementById('login-error').style.display = 'block';
+        }
+      }
 
+      // 支援按 Enter 鍵直接登入
+      function handleLoginKeyPress(e) {
+        if (e.key === 'Enter') {
+          checkLogin();
+        }
+      }
+      window.updateMasterRemark = async function(id, newRemark) {
+        if(!id || id === 'undefined') return;
+        try {
+            await updateDoc(doc(db, "master_items", id), { remark: newRemark });
+        } catch(e) { console.error("備註更新失敗", e); }
+    }
+    </script>
+    <!-- === 登入驗證腳本結束 === -->
 </body>
-</html>
+</html>  
