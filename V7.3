@@ -212,7 +212,8 @@ window.showMainMenu = function() {
         let title = document.querySelector('.main-title');
         if (title) title.style.display = 'none';
 
-        if(viewId === 'view-purchase') loadPurchaseList();
+if(viewId === 'view-purchase') loadPurchaseList();
+        if(viewId === 'view-compare') renderCompareTable(); // 新增：進入比較頁面時渲染對比表格
         if(viewId === 'view-expiry') renderExpiryTable();
         if(viewId === 'view-master') renderMasterList();
         if(viewId === 'view-query') filterHistory(); 
@@ -2128,6 +2129,7 @@ window.onload = () => {
     .card-master { background: linear-gradient(135deg, var(--color-orange), var(--color-orange-dark)); }
     .card-4 { background: linear-gradient(135deg, var(--color-green), var(--color-green-dark)); }
     .card-5 { background: linear-gradient(135deg, var(--color-dark), var(--color-dark-dark)); }
+    .card-compare { background: linear-gradient(135deg, #16a085, #1abc9c); }
 
     .view-section { display: none; max-width: 1200px; margin: 0 auto; animation: fadeIn 0.4s ease-in-out; }
     .view-section.active { display: block; }
@@ -2247,6 +2249,9 @@ window.onload = () => {
       </div>
       <div class="menu-card card-master" onclick="showView('view-master')">
           <i>📋</i><h3>物資總表</h3><small>(Master List)</small>
+      </div>
+      <div class="menu-card card-compare" onclick="showView('view-compare')">
+          <i>⚖️</i><h3>比較功能</h3><small>(Compare Items)</small>
       </div>
       <div class="menu-card card-4" onclick="showView('view-purchase')">
           <i>🛒</i><h3>年度買貨清單</h3><small>(Purchase List)</small>
@@ -2482,6 +2487,38 @@ window.onload = () => {
       </div>
   </div>
 
+<div id="view-compare" class="view-section">
+      <div class="card" style="max-width: 1400px; margin: 0 auto;">
+          <div class="card-header" style="--theme-color-1: #16a085; --theme-color-2: #1abc9c;">
+              <h3>⚖️ 物品並排對比與成本分析 (Compare Items)</h3>
+          </div>
+          <div class="excel-tip">💡 類似 Apple 官網的比較體驗：您可以同時選擇或手動輸入最多 **5 個不同物品** 進行 7 項核心指標對比。第一列可直接從資料庫選取物品進行 Auto-fill！</div>
+          
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+              <div><strong>已選擇對比項目: <span id="compareItemCount">0</span> / 5</strong></div>
+              <button class="action-btn" style="background:#e74c3c;" onclick="clearAllCompare()">🗑️ 清空所有對比</button>
+          </div>
+
+          <div class="table-container">
+              <table style="min-width: 1000px;">
+                  <thead>
+                      <tr>
+                          <th style="width: 180px; background: #f8f9fa; position: sticky; left: 0; z-index: 2;">比較屬性</th>
+                          <th style="text-align: center; min-width: 220px;">項目 1</th>
+                          <th style="text-align: center; min-width: 220px;">項目 2</th>
+                          <th style="text-align: center; min-width: 220px;">項目 3</th>
+                          <th style="text-align: center; min-width: 220px;">項目 4</th>
+                          <th style="text-align: center; min-width: 220px;">項目 5</th>
+                      </tr>
+                  </thead>
+                  <tbody id="compareTbody">
+                      <!-- 動態渲染對比列 -->
+                  </tbody>
+              </table>
+          </div>
+      </div>
+  </div>
+  
   <div id="view-admin" class="view-section">
       <div class="grid-2-col">
           <div style="display: flex; flex-direction: column; gap: 25px;">
@@ -2579,6 +2616,123 @@ window.onload = () => {
         } catch(e) { console.error("備註更新失敗", e); }
     }
     </script>
-    <!-- === 登入驗證腳本結束 === -->
+    <!-- === 登入驗證腳本結束 === -->  
+    // --- Apple 風格物品比較功能 (Compare Feature) ---
+    window.compareItems = [
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }
+    ];
+
+    window.clearAllCompare = function() {
+        window.compareItems = window.compareItems.map(() => ({ catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }));
+        renderCompareTable();
+    };
+
+    window.updateCompareField = function(colIndex, field, val) {
+        if (field === 'unitCost' || field === 'avgUsage' || field === 'duration') {
+            window.compareItems[colIndex][field] = parseFloat(val) || 0;
+        } else {
+            window.compareItems[colIndex][field] = val;
+        }
+        // 即時自動計算 Total Amount = Unit Cost * Average Usage * Duration
+        let totalCell = document.getElementById(`comp-total-${colIndex}`);
+        if (totalCell) {
+            let item = window.compareItems[colIndex];
+            let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
+            totalCell.innerText = Math.round(total * 100) / 100;
+        }
+    };
+
+    window.onSelectCompareDatabaseItem = function(colIndex, selectVal) {
+        if (!selectVal) return;
+        let foundMaster = masterItemsData.find(m => (m.catNo === selectVal || m.code === selectVal || m.desc === selectVal));
+        let catNo = foundMaster ? (foundMaster.catNo || '') : selectVal;
+        let desc = foundMaster ? (foundMaster.desc || '') : '';
+        let brand = foundMaster && foundMaster.brand ? foundMaster.brand : '';
+        let unitCost = foundMaster && foundMaster.unitCost ? parseFloat(foundMaster.unitCost) || 0 : 0;
+        
+        // 從 transactionsData 自動計算該物品的每月平均出庫量 (Average usage per month)
+        let matchingTxs = transactionsData.filter(t => {
+            let { mCat, mDesc, mCode } = extractItemDetails(t);
+            return mCat === catNo || mDesc === desc || mCode === selectVal;
+        });
+
+        let totalOutQty = 0;
+        let monthsSet = new Set();
+        matchingTxs.forEach(t => {
+            if (t.type === 'Out' && t.date) {
+                totalOutQty += parseFloat(t.qty) || 0;
+                monthsSet.add(t.date.slice(0, 7)); // YYYY-MM
+            }
+        });
+        let activeMonths = monthsSet.size > 0 ? monthsSet.size : 1;
+        let avgUsage = Math.round((totalOutQty / activeMonths) * 100) / 100;
+
+        window.compareItems[colIndex] = {
+            catNo: catNo,
+            desc: desc,
+            brand: brand,
+            unitCost: unitCost,
+            avgUsage: avgUsage,
+            duration: 1
+        };
+        renderCompareTable();
+    };
+
+    window.renderCompareTable = function() {
+        let activeCount = window.compareItems.filter(item => item.catNo || item.desc).length;
+        let countEl = document.getElementById('compareItemCount');
+        if (countEl) countEl.innerText = activeCount;
+
+        let dbOptions = `<option value="">-- 從資料庫選擇物品 (Auto-fill) --</option>`;
+        masterItemsData.forEach(m => {
+            let label = [m.catNo, m.desc, m.code !== 'NA' ? m.code : ''].filter(Boolean).join(' | ');
+            dbOptions += `<option value="${m.catNo || m.desc}">${label}</option>`;
+        });
+
+        // 7 項指定比較欄位
+        let attributes = [
+            { label: '選擇資料庫物品 (Auto-fill)', type: 'select', field: 'dbSelect' },
+            { label: '1. Cat no', type: 'input', field: 'catNo', placeholder: '輸入 Cat No' },
+            { label: '2. Description', type: 'input', field: 'desc', placeholder: '輸入描述' },
+            { label: '3. Brand', type: 'input', field: 'brand', placeholder: '輸入品牌' },
+            { label: '4. Unit Cost ($)', type: 'number', field: 'unitCost', placeholder: '0.00' },
+            { label: '5. Average Usage / Month', type: 'number', field: 'avgUsage', placeholder: '0' },
+            { label: '6. Duration (Months)', type: 'number', field: 'duration', placeholder: '1' },
+            { label: '7. Total Amount ($)', type: 'calculated', field: 'totalAmount' }
+        ];
+
+        let tbody = document.getElementById('compareTbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        attributes.forEach(attr => {
+            let tr = document.createElement('tr');
+            let html = `<td style="font-weight: bold; background: #f8f9fa; position: sticky; left: 0; z-index: 1; border-right: 1px solid #ddd; padding: 12px;">${attr.label}</td>`;
+            
+            for (let i = 0; i < 5; i++) {
+                let item = window.compareItems[i];
+                html += `<td style="text-align: center; border-right: 1px solid #eee; vertical-align: middle; padding: 10px;">`;
+                
+                if (attr.type === 'select') {
+                    html += `<select class="inline-edit" style="width: 100%; padding: 6px;" onchange="onSelectCompareDatabaseItem(${i}, this.value)">${dbOptions}</select>`;
+                } else if (attr.type === 'input') {
+                    html += `<input type="text" class="inline-edit" style="width: 100%;" value="${item[attr.field] || ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
+                } else if (attr.type === 'number') {
+                    html += `<input type="number" class="inline-edit" style="width: 100%;" step="any" value="${item[attr.field] !== undefined ? item[attr.field] : ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
+                } else if (attr.type === 'calculated') {
+                    let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
+                    html += `<strong id="comp-total-${i}" style="color: #27ae60; font-size: 1.2rem;">${Math.round(total * 100) / 100}</strong>`;
+                }
+                
+                html += `</td>`;
+            }
+            tr.innerHTML = html;
+            tbody.appendChild(tr);
+        });
+    };
 </body>
 </html>  
