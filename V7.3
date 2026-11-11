@@ -10,10 +10,13 @@ body {
       background-color: #f4f7f6; /* 全局預設乾淨底色，登入後不會有背景圖 */
     }
 
-/* 1. 將最初系統登入背景改為淡藍色 */
+/* 1. 將最初系統登入背景改為淡藍色，並支援自訂圖片排版 */
     #systemLogin { 
-      background: #e3f2fd !important; /* 柔和淡藍色 */
-      background-image: none !important;
+      background: #e3f2fd !important; 
+      background-size: cover !important;
+      background-position: center !important;
+      background-repeat: no-repeat !important;
+      transition: background 0.3s ease;
     }
 
 /* 2. 將管理員設定 Admin Settings 方塊改為粉紅色 */
@@ -212,8 +215,7 @@ window.showMainMenu = function() {
         let title = document.querySelector('.main-title');
         if (title) title.style.display = 'none';
 
-if(viewId === 'view-purchase') loadPurchaseList();
-        if(viewId === 'view-compare') renderCompareTable(); // 新增：進入比較頁面時渲染對比表格
+        if(viewId === 'view-purchase') loadPurchaseList();
         if(viewId === 'view-expiry') renderExpiryTable();
         if(viewId === 'view-master') renderMasterList();
         if(viewId === 'view-query') filterHistory(); 
@@ -249,7 +251,48 @@ window.verifyAdmin = function() {
         }
     }
     /* ========== 替換結束 ========== */
+/* ========== 新增：自訂登入主題功能 ========== */
+    window.changeLoginTheme = function(type, value) {
+        const sysLogin = document.getElementById('systemLogin');
+        if (!sysLogin) return;
+        
+        if (type === 'color') {
+            sysLogin.style.setProperty('background', value, 'important');
+            sysLogin.style.setProperty('background-image', 'none', 'important');
+            localStorage.setItem('loginThemeType', 'color');
+            localStorage.setItem('loginThemeValue', value);
+        } else if (type === 'image') {
+            const file = value.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const imgUrl = e.target.result;
+                sysLogin.style.setProperty('background-image', `url(${imgUrl})`, 'important');
+                sysLogin.style.setProperty('background-color', 'transparent', 'important');
+                localStorage.setItem('loginThemeType', 'image');
+                localStorage.setItem('loginThemeValue', imgUrl); // 注意：圖片太大可能會超過儲存限制
+            };
+            reader.readAsDataURL(file);
+        }
+        alert('✅ 登入介面主題已更新！你可以登出查看效果。');
+    };
 
+    // 頁面載入時自動套用已儲存的主題
+    window.addEventListener('DOMContentLoaded', () => {
+        const savedType = localStorage.getItem('loginThemeType');
+        const savedValue = localStorage.getItem('loginThemeValue');
+        const sysLogin = document.getElementById('systemLogin');
+        if (sysLogin && savedType && savedValue) {
+            if (savedType === 'color') {
+                sysLogin.style.setProperty('background', savedValue, 'important');
+                sysLogin.style.setProperty('background-image', 'none', 'important');
+            } else if (savedType === 'image') {
+                sysLogin.style.setProperty('background-image', `url(${savedValue})`, 'important');
+                sysLogin.style.setProperty('background-color', 'transparent', 'important');
+            }
+        }
+    });
+    /* ========== 新增結束 ========== */
     // --- Drape / Consumable 數據切換 ---
     window.setQueryCategory = function(cat) {
         currentQueryCategory = cat;
@@ -2129,7 +2172,6 @@ window.onload = () => {
     .card-master { background: linear-gradient(135deg, var(--color-orange), var(--color-orange-dark)); }
     .card-4 { background: linear-gradient(135deg, var(--color-green), var(--color-green-dark)); }
     .card-5 { background: linear-gradient(135deg, var(--color-dark), var(--color-dark-dark)); }
-    .card-compare { background: linear-gradient(135deg, #16a085, #1abc9c); }
 
     .view-section { display: none; max-width: 1200px; margin: 0 auto; animation: fadeIn 0.4s ease-in-out; }
     .view-section.active { display: block; }
@@ -2249,9 +2291,6 @@ window.onload = () => {
       </div>
       <div class="menu-card card-master" onclick="showView('view-master')">
           <i>📋</i><h3>物資總表</h3><small>(Master List)</small>
-      </div>
-      <div class="menu-card card-compare" onclick="showView('view-compare')">
-          <i>⚖️</i><h3>比較功能</h3><small>(Compare Items)</small>
       </div>
       <div class="menu-card card-4" onclick="showView('view-purchase')">
           <i>🛒</i><h3>年度買貨清單</h3><small>(Purchase List)</small>
@@ -2487,38 +2526,6 @@ window.onload = () => {
       </div>
   </div>
 
-<div id="view-compare" class="view-section">
-      <div class="card" style="max-width: 1400px; margin: 0 auto;">
-          <div class="card-header" style="--theme-color-1: #16a085; --theme-color-2: #1abc9c;">
-              <h3>⚖️ 物品並排對比與成本分析 (Compare Items)</h3>
-          </div>
-          <div class="excel-tip">💡 類似 Apple 官網的比較體驗：您可以同時選擇或手動輸入最多 **5 個不同物品** 進行 7 項核心指標對比。第一列可直接從資料庫選取物品進行 Auto-fill！</div>
-          
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
-              <div><strong>已選擇對比項目: <span id="compareItemCount">0</span> / 5</strong></div>
-              <button class="action-btn" style="background:#e74c3c;" onclick="clearAllCompare()">🗑️ 清空所有對比</button>
-          </div>
-
-          <div class="table-container">
-              <table style="min-width: 1000px;">
-                  <thead>
-                      <tr>
-                          <th style="width: 180px; background: #f8f9fa; position: sticky; left: 0; z-index: 2;">比較屬性</th>
-                          <th style="text-align: center; min-width: 220px;">項目 1</th>
-                          <th style="text-align: center; min-width: 220px;">項目 2</th>
-                          <th style="text-align: center; min-width: 220px;">項目 3</th>
-                          <th style="text-align: center; min-width: 220px;">項目 4</th>
-                          <th style="text-align: center; min-width: 220px;">項目 5</th>
-                      </tr>
-                  </thead>
-                  <tbody id="compareTbody">
-                      <!-- 動態渲染對比列 -->
-                  </tbody>
-              </table>
-          </div>
-      </div>
-  </div>
-  
   <div id="view-admin" class="view-section">
       <div class="grid-2-col">
           <div style="display: flex; flex-direction: column; gap: 25px;">
@@ -2581,6 +2588,18 @@ window.onload = () => {
 <button class="btn-primary" style="background-color: #e67e22; margin-bottom: 15px;" onclick="fixSystemBalances()">
     🛠️ 修正系統結餘運算問題 (重新校準 IN/OUT 結餘)
 </button>
+                    <div style="margin-top:20px; border-top: 2px solid #ccc; padding-top:20px;">
+          <h3 style="color:#2c3e50;">💾 資料庫備份與復原</h3>
+          <p style="font-size:0.9rem; color:#555;">為避免誤刪資料，建議定期下載備份。</p>
+          <button class="action-btn" style="background:#2980b9;" onclick="backupData()">📥 下載資料庫備份檔</button>
+          <input type="file" id="restoreFile" style="display:none" accept=".json" onchange="restoreData(event)">
+          <button class="action-btn" style="background:#8e44ad;" onclick="document.getElementById('restoreFile').click()">📤 從備份檔復原資料</button>
+      </div>
+
+      <div style="margin-top:20px; border-top: 2px solid #ccc; padding-top:20px;">
+          <h3 style="color:#2c3e50;">🗑️ 選擇性刪除資料 (重新上載專用)</h3>
+          <p style="font-size:0.9rem; color:#555;">可依照「年度 + 分類」個別刪除該批次的所有資料，方便修正錯誤重新上載 Excel。</p>
+          <button class="action-btn" style="background:#d35400;" onclick="showSpecificDeleteModal()">🔍 選擇要刪除的上載數據</button>
                   </div>
               </div>
           </div>
@@ -2615,124 +2634,218 @@ window.onload = () => {
             await updateDoc(doc(db, "master_items", id), { remark: newRemark });
         } catch(e) { console.error("備註更新失敗", e); }
     }
-    </script>
-    <!-- === 登入驗證腳本結束 === -->  
-    // --- Apple 風格物品比較功能 (Compare Feature) ---
-    window.compareItems = [
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }
-    ];
+      // === 資料備份 ===
+    window.backupData = function() {
+        const backup = { masterItems: masterItemsData, transactions: transactionsData };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", `System_Backup_${new Date().toISOString().slice(0,10)}.json`);
+        dlAnchorElem.click();
+    }
 
-    window.clearAllCompare = function() {
-        window.compareItems = window.compareItems.map(() => ({ catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }));
-        renderCompareTable();
-    };
-
-    window.updateCompareField = function(colIndex, field, val) {
-        if (field === 'unitCost' || field === 'avgUsage' || field === 'duration') {
-            window.compareItems[colIndex][field] = parseFloat(val) || 0;
-        } else {
-            window.compareItems[colIndex][field] = val;
-        }
-        // 即時自動計算 Total Amount = Unit Cost * Average Usage * Duration
-        let totalCell = document.getElementById(`comp-total-${colIndex}`);
-        if (totalCell) {
-            let item = window.compareItems[colIndex];
-            let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
-            totalCell.innerText = Math.round(total * 100) / 100;
-        }
-    };
-
-    window.onSelectCompareDatabaseItem = function(colIndex, selectVal) {
-        if (!selectVal) return;
-        let foundMaster = masterItemsData.find(m => (m.catNo === selectVal || m.code === selectVal || m.desc === selectVal));
-        let catNo = foundMaster ? (foundMaster.catNo || '') : selectVal;
-        let desc = foundMaster ? (foundMaster.desc || '') : '';
-        let brand = foundMaster && foundMaster.brand ? foundMaster.brand : '';
-        let unitCost = foundMaster && foundMaster.unitCost ? parseFloat(foundMaster.unitCost) || 0 : 0;
-        
-        // 從 transactionsData 自動計算該物品的每月平均出庫量 (Average usage per month)
-        let matchingTxs = transactionsData.filter(t => {
-            let { mCat, mDesc, mCode } = extractItemDetails(t);
-            return mCat === catNo || mDesc === desc || mCode === selectVal;
-        });
-
-        let totalOutQty = 0;
-        let monthsSet = new Set();
-        matchingTxs.forEach(t => {
-            if (t.type === 'Out' && t.date) {
-                totalOutQty += parseFloat(t.qty) || 0;
-                monthsSet.add(t.date.slice(0, 7)); // YYYY-MM
-            }
-        });
-        let activeMonths = monthsSet.size > 0 ? monthsSet.size : 1;
-        let avgUsage = Math.round((totalOutQty / activeMonths) * 100) / 100;
-
-        window.compareItems[colIndex] = {
-            catNo: catNo,
-            desc: desc,
-            brand: brand,
-            unitCost: unitCost,
-            avgUsage: avgUsage,
-            duration: 1
-        };
-        renderCompareTable();
-    };
-
-    window.renderCompareTable = function() {
-        let activeCount = window.compareItems.filter(item => item.catNo || item.desc).length;
-        let countEl = document.getElementById('compareItemCount');
-        if (countEl) countEl.innerText = activeCount;
-
-        let dbOptions = `<option value="">-- 從資料庫選擇物品 (Auto-fill) --</option>`;
-        masterItemsData.forEach(m => {
-            let label = [m.catNo, m.desc, m.code !== 'NA' ? m.code : ''].filter(Boolean).join(' | ');
-            dbOptions += `<option value="${m.catNo || m.desc}">${label}</option>`;
-        });
-
-        // 7 項指定比較欄位
-        let attributes = [
-            { label: '選擇資料庫物品 (Auto-fill)', type: 'select', field: 'dbSelect' },
-            { label: '1. Cat no', type: 'input', field: 'catNo', placeholder: '輸入 Cat No' },
-            { label: '2. Description', type: 'input', field: 'desc', placeholder: '輸入描述' },
-            { label: '3. Brand', type: 'input', field: 'brand', placeholder: '輸入品牌' },
-            { label: '4. Unit Cost ($)', type: 'number', field: 'unitCost', placeholder: '0.00' },
-            { label: '5. Average Usage / Month', type: 'number', field: 'avgUsage', placeholder: '0' },
-            { label: '6. Duration (Months)', type: 'number', field: 'duration', placeholder: '1' },
-            { label: '7. Total Amount ($)', type: 'calculated', field: 'totalAmount' }
-        ];
-
-        let tbody = document.getElementById('compareTbody');
-        if (!tbody) return;
-        tbody.innerHTML = '';
-
-        attributes.forEach(attr => {
-            let tr = document.createElement('tr');
-            let html = `<td style="font-weight: bold; background: #f8f9fa; position: sticky; left: 0; z-index: 1; border-right: 1px solid #ddd; padding: 12px;">${attr.label}</td>`;
-            
-            for (let i = 0; i < 5; i++) {
-                let item = window.compareItems[i];
-                html += `<td style="text-align: center; border-right: 1px solid #eee; vertical-align: middle; padding: 10px;">`;
+    // === 資料復原 ===
+    window.restoreData = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!confirm("⚠️ 警告：復原資料將會【刪除覆蓋】當前系統所有資料，請確定你上傳的是正確的備份檔！確定繼續？")) return;
                 
-                if (attr.type === 'select') {
-                    html += `<select class="inline-edit" style="width: 100%; padding: 6px;" onchange="onSelectCompareDatabaseItem(${i}, this.value)">${dbOptions}</select>`;
-                } else if (attr.type === 'input') {
-                    html += `<input type="text" class="inline-edit" style="width: 100%;" value="${item[attr.field] || ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
-                } else if (attr.type === 'number') {
-                    html += `<input type="number" class="inline-edit" style="width: 100%;" step="any" value="${item[attr.field] !== undefined ? item[attr.field] : ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
-                } else if (attr.type === 'calculated') {
-                    let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
-                    html += `<strong id="comp-total-${i}" style="color: #27ae60; font-size: 1.2rem;">${Math.round(total * 100) / 100}</strong>`;
+                document.body.style.cursor = 'wait';
+                const loadingDiv = document.createElement('div');
+                loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#8e44ad; color:#fff; padding:12px 24px; border-radius:6px; z-index:9999; font-weight:bold;";
+                loadingDiv.innerText = "⏳ 正在復原資料，請勿關閉視窗..."; document.body.appendChild(loadingDiv);
+
+                // 1. 清空當前資料庫
+                const txSnap = await getDocs(collection(db, "transactions"));
+                for (let d of txSnap.docs) await deleteDoc(doc(db, "transactions", d.id));
+                const masterSnap = await getDocs(collection(db, "master_items"));
+                for (let d of masterSnap.docs) await deleteDoc(doc(db, "master_items", d.id));
+                
+                // 2. 寫入備份檔資料
+                if(data.masterItems) {
+                    for (let m of data.masterItems) {
+                        let mData = {...m}; delete mData.id;
+                        await addDoc(collection(db, "master_items"), mData);
+                    }
                 }
-                
-                html += `</td>`;
+                if(data.transactions) {
+                    for (let t of data.transactions) {
+                        let tData = {...t}; delete tData.id;
+                        if(tData.timestamp) tData.timestamp = new Date(tData.date + "T12:00:00"); // 重建排序用的時間戳
+                        await addDoc(collection(db, "transactions"), tData);
+                    }
+                }
+                document.body.removeChild(loadingDiv);
+                alert("✅ 資料復原成功！系統將自動重新載入。");
+                await loadMasterItems(); loadStockData();
+            } catch(err) {
+                console.error(err); alert("❌ 復原失敗，檔案可能損毀或非本系統備份格式。");
             }
-            tr.innerHTML = html;
-            tbody.appendChild(tr);
+            document.body.style.cursor = 'default';
+        };
+        reader.readAsText(file);
+        event.target.value = ''; 
+    }
+
+    // === 選擇性刪除 Excel 數據 (按年度及分類) ===
+    window.showSpecificDeleteModal = function() {
+        let groups = new Set();
+        transactionsData.forEach(t => {
+            if (t.date) {
+                const parts = t.date.split('-');
+                if (parts.length >= 2) {
+                    const y = parseInt(parts[0], 10); 
+                    const m = parseInt(parts[1], 10);
+                    if (!isNaN(y) && !isNaN(m)) { 
+                        const fyStart = m >= 4 ? y : y - 1;
+                        const cat = t.category || "Consumable";
+                        groups.add(`${fyStart}-${fyStart+1}年度 | ${cat}`);
+                    }
+                }
+            }
         });
+        
+        let sortedGroups = Array.from(groups).sort().reverse();
+        if(sortedGroups.length === 0) { alert("目前沒有任何數據可供刪除。"); return; }
+        
+        let optionsHtml = sortedGroups.map(g => {
+            return `<div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; background:#f4f7f6; padding:12px; border-radius:5px; border:1px solid #ddd;">
+                <strong style="color:#2c3e50;">${g}</strong>
+                <button onclick="deleteSpecificGroup('${g}')" style="background:#e74c3c; color:white; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">🗑️ 刪除此批數據</button>
+            </div>`;
+        }).join('');
+        
+        const modal = document.createElement('div');
+        modal.id = 'specificDeleteModal';
+        modal.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;justify-content:center;align-items:center;";
+        modal.innerHTML = `
+            <div style="background:white;padding:25px;border-radius:10px;width:90%;max-width:550px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 5px 15px rgba(0,0,0,0.3);">
+                <h3 style="margin-top:0; color:#2c3e50;">🗑️ 選擇要刪除的上載數據</h3>
+                <p style="color:#e74c3c; font-size: 0.9em; margin-bottom:15px;">⚠️ 刪除後系統結餘將自動重新計算。請先確定這就是你想重新上載的年份及分類。</p>
+                <div style="overflow-y:auto; flex-grow:1; margin-bottom:15px;">
+                    ${optionsHtml}
+                </div>
+                <div style="text-align:right; border-top:1px solid #ccc; padding-top:15px;">
+                    <button onclick="document.body.removeChild(document.getElementById('specificDeleteModal'))" style="background:#7f8c8d;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;">關閉</button>
+                </div>
+                <!-- ========== 新增：登入介面主題設定 ========== -->
+        <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-top: 20px; text-align: left;">
+            <h3 style="color: #2c3e50; margin-top: 0; font-size: 1.2rem;">🎨 系統登入介面主題設定</h3>
+            <p style="color: #7f8c8d; font-size: 0.9rem;">你可以選擇預設淺色背景，或上載自訂圖片：</p>
+            
+            <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                <strong style="color: #333;">預設顏色：</strong>
+                <!-- 淺藍、淺粉、淺綠、淺黃、預設灰白 -->
+                <button onclick="changeLoginTheme('color', '#e3f2fd')" style="background: #e3f2fd; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡藍色"></button>
+                <button onclick="changeLoginTheme('color', '#f8bbd0')" style="background: #f8bbd0; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡粉紅"></button>
+                <button onclick="changeLoginTheme('color', '#e8f5e9')" style="background: #e8f5e9; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡綠色"></button>
+                <button onclick="changeLoginTheme('color', '#fff9c4')" style="background: #fff9c4; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="淡黃色"></button>
+                <button onclick="changeLoginTheme('color', '#f4f7f6')" style="background: #f4f7f6; border: 1px solid #ccc; width: 35px; height: 35px; cursor: pointer; border-radius: 5px;" title="預設底色"></button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <strong style="color: #333;">自訂圖片：</strong>
+                <input type="file" accept="image/*" onchange="changeLoginTheme('image', event)" style="font-size: 0.9rem; padding: 5px;">
+            </div>
+        </div>
+        <!-- ========== 新增結束 ========== -->
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    window.deleteSpecificGroup = async function(groupString) {
+        let parts = groupString.replace('年度', '').split(' | ');
+        if(parts.length !== 2) return;
+        let targetStartYear = parseInt(parts[0].split('-')[0]);
+        let targetCategory = parts[1];
+        
+        if(!confirm(`⚠️ 確定要刪除所有【${targetStartYear}-${targetStartYear+1}年度】的【${targetCategory}】資料嗎？\n這將會清除該年度的 In, Out 及 Opening Balance！`)) return;
+        
+        if(prompt(`為了防止誤刪，請輸入 'DELETE' 以確認執行：`) !== 'DELETE') { alert("已取消刪除操作。"); return; }
+        
+        document.body.style.cursor = 'wait';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.style.cssText = "position:fixed; top:20px; right:20px; background:#e74c3c; color:#fff; padding:12px 24px; border-radius:6px; z-index:10001; font-weight:bold;";
+        loadingDiv.innerText = `🗑️ 正在刪除 ${groupString} 的所有紀錄...`; document.body.appendChild(loadingDiv);
+        
+        let toDelete = [];
+        transactionsData.forEach(t => {
+            if (t.date && (t.category || "Consumable") === targetCategory) {
+                const dateParts = t.date.split('-');
+                const y = parseInt(dateParts[0], 10); 
+                const m = parseInt(dateParts[1], 10);
+                const fyStart = m >= 4 ? y : y - 1;
+                if (fyStart === targetStartYear) toDelete.push(t.id);
+            }
+        });
+        
+        try {
+            for (let id of toDelete) await deleteDoc(doc(db, "transactions", id));
+            document.body.removeChild(loadingDiv);
+            let modal = document.getElementById('specificDeleteModal');
+            if(modal) document.body.removeChild(modal);
+            alert(`✅ 已成功刪除 ${toDelete.length} 筆 ${groupString} 的紀錄！\n你現在可以重新上載修正後的 Excel 檔了。`);
+            loadStockData();
+        } catch(e) {
+            console.error(e); if (document.body.contains(loadingDiv)) document.body.removeChild(loadingDiv); alert("❌ 刪除失敗");
+        }
+        document.body.style.cursor = 'default';
+    }
+// ========== 替換開始：新增備份與刪除數據的 JavaScript 功能 ==========
+
+    // 1. 下載資料庫備份檔功能
+    window.downloadDatabaseBackup = function() {
+        if (transactionsData.length === 0 && masterItemsData.length === 0) {
+            alert("目前沒有資料可供備份！"); return;
+        }
+        const backupData = {
+            transactions: transactionsData,
+            masterItems: masterItemsData,
+            exportTime: new Date().toISOString()
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "Database_Backup_" + new Date().toISOString().slice(0,10) + ".json");
+        document.body.appendChild(downloadAnchorNode); 
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
     };
+
+    // 2. 選擇要刪除的上載數據功能 (以日期為條件進行批量刪除)
+    window.deleteUploadedData = async function() {
+        let delDate = prompt("請輸入要刪除上載數據的「日期」(格式 YYYY-MM-DD)：");
+        if (!delDate) return;
+        
+        let toDelete = transactionsData.filter(t => t.date === delDate);
+        if (toDelete.length === 0) {
+            alert(`找不到日期為 ${delDate} 的數據。`);
+            return;
+        }
+        
+        if (!confirm(`⚠️ 警告：即將刪除 ${delDate} 的 ${toDelete.length} 筆上載數據。\n刪除後無法復原，確定嗎？`)) return;
+        
+        document.body.style.cursor = 'wait';
+        try {
+            for (let t of toDelete) {
+                await deleteDoc(doc(db, "transactions", t.id));
+            }
+            alert(`✅ 成功刪除 ${toDelete.length} 筆數據！`);
+            loadStockData(); // 重新整理表格
+        } catch (e) {
+            console.error(e);
+            alert("❌ 刪除失敗");
+        }
+        document.body.style.cursor = 'default';
+    };
+
+// ========== 替換結束 ==========
+    </script>
+    <!-- === 登入驗證腳本結束 === -->
 </body>
 </html>  
