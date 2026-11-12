@@ -2670,6 +2670,7 @@ window.onload = () => {
             await updateDoc(doc(db, "master_items", id), { remark: newRemark });
         } catch(e) { console.error("備註更新失敗", e); }
     }
+    
     // --- Apple 風格物品比較功能 (Compare Feature) ---
     window.compareItems = [
         { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
