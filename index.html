@@ -2003,7 +2003,128 @@ if (diffDays < 0) {
         XLSX.utils.book_append_sheet(wb, ws, "Master List");
         XLSX.writeFile(wb, `Master_List_${new Date().toISOString().slice(0,10)}.xlsx`);
     };
+window.updateMasterRemark = async function(id, newRemark) {
+        if(!id || id === 'undefined') return;
+        try {
+            await updateDoc(doc(db, "master_items", id), { remark: newRemark });
+        } catch(e) { console.error("備註更新失敗", e); }
+    }
 
+    // --- Apple 風格物品比較功能 (Compare Feature) ---
+    window.compareItems = [
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
+        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }
+    ];
+
+    window.clearAllCompare = function() {
+        window.compareItems = window.compareItems.map(() => ({ catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }));
+        renderCompareTable();
+    };
+
+    window.updateCompareField = function(colIndex, field, val) {
+        if (field === 'unitCost' || field === 'avgUsage' || field === 'duration') {
+            window.compareItems[colIndex][field] = parseFloat(val) || 0;
+        } else {
+            window.compareItems[colIndex][field] = val;
+        }
+        let totalCell = document.getElementById(`comp-total-${colIndex}`);
+        if (totalCell) {
+            let item = window.compareItems[colIndex];
+            let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
+            totalCell.innerText = Math.round(total * 100) / 100;
+        }
+    };
+
+    window.onSelectCompareDatabaseItem = function(colIndex, selectVal) {
+        if (!selectVal) return;
+        let foundMaster = masterItemsData.find(m => (m.catNo === selectVal || m.code === selectVal || m.desc === selectVal));
+        let catNo = foundMaster ? (foundMaster.catNo || '') : selectVal;
+        let desc = foundMaster ? (foundMaster.desc || '') : '';
+        let brand = foundMaster && foundMaster.brand ? foundMaster.brand : '';
+        let unitCost = foundMaster && foundMaster.unitCost ? parseFloat(foundMaster.unitCost) || 0 : 0;
+        
+        let matchingTxs = transactionsData.filter(t => {
+            let { mCat, mDesc, mCode } = extractItemDetails(t);
+            return mCat === catNo || mDesc === desc || mCode === selectVal;
+        });
+
+        let totalOutQty = 0;
+        let monthsSet = new Set();
+        matchingTxs.forEach(t => {
+            if (t.type === 'Out' && t.date) {
+                totalOutQty += parseFloat(t.qty) || 0;
+                monthsSet.add(t.date.slice(0, 7));
+            }
+        });
+        let activeMonths = monthsSet.size > 0 ? monthsSet.size : 1;
+        let avgUsage = Math.round((totalOutQty / activeMonths) * 100) / 100;
+
+        window.compareItems[colIndex] = {
+            catNo: catNo,
+            desc: desc,
+            brand: brand,
+            unitCost: unitCost,
+            avgUsage: avgUsage,
+            duration: 1
+        };
+        renderCompareTable();
+    };
+
+    window.renderCompareTable = function() {
+        let activeCount = window.compareItems.filter(item => item.catNo || item.desc).length;
+        let countEl = document.getElementById('compareItemCount');
+        if (countEl) countEl.innerText = activeCount;
+
+        let dbOptions = `<option value="">-- 從資料庫選擇物品 (Auto-fill) --</option>`;
+        masterItemsData.forEach(m => {
+            let label = [m.catNo, m.desc, m.code !== 'NA' ? m.code : ''].filter(Boolean).join(' | ');
+            dbOptions += `<option value="${m.catNo || m.desc}">${label}</option>`;
+        });
+
+        // 7 項指定比較欄位（已對應你要求的精確文字）
+        let attributes = [
+            { label: '選擇資料庫物品 (Auto-fill)', type: 'select', field: 'dbSelect' },
+            { label: '1. Cat no', type: 'input', field: 'catNo', placeholder: '輸入 Cat No' },
+            { label: '2. Description', type: 'input', field: 'desc', placeholder: '輸入描述' },
+            { label: '3. Brand', type: 'input', field: 'brand', placeholder: '輸入品牌' },
+            { label: '4. Unit cost', type: 'number', field: 'unitCost', placeholder: '0.00' },
+            { label: '5. Average usage per month', type: 'number', field: 'avgUsage', placeholder: '0' },
+            { label: '6. Duration', type: 'number', field: 'duration', placeholder: '1' },
+            { label: '7. Total amount = (Unit cost * Average usage per month * Duration) Auto fill', type: 'calculated', field: 'totalAmount' }
+        ];
+
+        let tbody = document.getElementById('compareTbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        attributes.forEach(attr => {
+            let tr = document.createElement('tr');
+            let html = `<td style="font-weight: bold; background: #f8f9fa; position: sticky; left: 0; z-index: 1; border-right: 1px solid #ddd; padding: 12px;">${attr.label}</td>`;
+            
+            for (let i = 0; i < 5; i++) {
+                let item = window.compareItems[i];
+                html += `<td style="text-align: center; border-right: 1px solid #eee; vertical-align: middle; padding: 10px;">`;
+                
+                if (attr.type === 'select') {
+                    html += `<select class="inline-edit" style="width: 100%; padding: 6px;" onchange="onSelectCompareDatabaseItem(${i}, this.value)">${dbOptions}</select>`;
+                } else if (attr.type === 'input') {
+                    html += `<input type="text" class="inline-edit" style="width: 100%;" value="${item[attr.field] || ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
+                } else if (attr.type === 'number') {
+                    html += `<input type="number" class="inline-edit" style="width: 100%;" step="any" value="${item[attr.field] !== undefined ? item[attr.field] : ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
+                } else if (attr.type === 'calculated') {
+                    let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
+                    html += `<strong id="comp-total-${i}" style="color: #27ae60; font-size: 1.2rem;">${Math.round(total * 100) / 100}</strong>`;
+                }
+                
+                html += `</td>`;
+            }
+            tr.innerHTML = html;
+            tbody.appendChild(tr);
+        });
+    };
     const columns = [ "Item", "Instrument / Consumable", "HA Item No", "Contract Number", "Brand", "Supplier", "Cat No", "UOM", "UOM (Box)", "Unit Cost", "COA", "Total Qty (pcs)", "Total Qty (Box)", "Total Cost", "PR No.", "PO No.", "Rec Date", "Rec No" ];
 
     window.addPurchaseRow = async function() {
@@ -2664,127 +2785,6 @@ window.onload = () => {
           checkLogin();
         }
       }
-      window.updateMasterRemark = async function(id, newRemark) {
-        if(!id || id === 'undefined') return;
-        try {
-            await updateDoc(doc(db, "master_items", id), { remark: newRemark });
-        } catch(e) { console.error("備註更新失敗", e); }
-    }
-    // --- Apple 風格物品比較功能 (Compare Feature) ---
-    window.compareItems = [
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 },
-        { catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }
-    ];
-
-    window.clearAllCompare = function() {
-        window.compareItems = window.compareItems.map(() => ({ catNo: '', desc: '', brand: '', unitCost: 0, avgUsage: 0, duration: 1 }));
-        renderCompareTable();
-    };
-
-    window.updateCompareField = function(colIndex, field, val) {
-        if (field === 'unitCost' || field === 'avgUsage' || field === 'duration') {
-            window.compareItems[colIndex][field] = parseFloat(val) || 0;
-        } else {
-            window.compareItems[colIndex][field] = val;
-        }
-        let totalCell = document.getElementById(`comp-total-${colIndex}`);
-        if (totalCell) {
-            let item = window.compareItems[colIndex];
-            let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
-            totalCell.innerText = Math.round(total * 100) / 100;
-        }
-    };
-
-    window.onSelectCompareDatabaseItem = function(colIndex, selectVal) {
-        if (!selectVal) return;
-        let foundMaster = masterItemsData.find(m => (m.catNo === selectVal || m.code === selectVal || m.desc === selectVal));
-        let catNo = foundMaster ? (foundMaster.catNo || '') : selectVal;
-        let desc = foundMaster ? (foundMaster.desc || '') : '';
-        let brand = foundMaster && foundMaster.brand ? foundMaster.brand : '';
-        let unitCost = foundMaster && foundMaster.unitCost ? parseFloat(foundMaster.unitCost) || 0 : 0;
-        
-        let matchingTxs = transactionsData.filter(t => {
-            let { mCat, mDesc, mCode } = extractItemDetails(t);
-            return mCat === catNo || mDesc === desc || mCode === selectVal;
-        });
-
-        let totalOutQty = 0;
-        let monthsSet = new Set();
-        matchingTxs.forEach(t => {
-            if (t.type === 'Out' && t.date) {
-                totalOutQty += parseFloat(t.qty) || 0;
-                monthsSet.add(t.date.slice(0, 7));
-            }
-        });
-        let activeMonths = monthsSet.size > 0 ? monthsSet.size : 1;
-        let avgUsage = Math.round((totalOutQty / activeMonths) * 100) / 100;
-
-        window.compareItems[colIndex] = {
-            catNo: catNo,
-            desc: desc,
-            brand: brand,
-            unitCost: unitCost,
-            avgUsage: avgUsage,
-            duration: 1
-        };
-        renderCompareTable();
-    };
-
-    window.renderCompareTable = function() {
-        let activeCount = window.compareItems.filter(item => item.catNo || item.desc).length;
-        let countEl = document.getElementById('compareItemCount');
-        if (countEl) countEl.innerText = activeCount;
-
-        let dbOptions = `<option value="">-- 從資料庫選擇物品 (Auto-fill) --</option>`;
-        masterItemsData.forEach(m => {
-            let label = [m.catNo, m.desc, m.code !== 'NA' ? m.code : ''].filter(Boolean).join(' | ');
-            dbOptions += `<option value="${m.catNo || m.desc}">${label}</option>`;
-        });
-
-        // 7 項指定比較欄位（已對應你要求的精確文字）
-        let attributes = [
-            { label: '選擇資料庫物品 (Auto-fill)', type: 'select', field: 'dbSelect' },
-            { label: '1. Cat no', type: 'input', field: 'catNo', placeholder: '輸入 Cat No' },
-            { label: '2. Description', type: 'input', field: 'desc', placeholder: '輸入描述' },
-            { label: '3. Brand', type: 'input', field: 'brand', placeholder: '輸入品牌' },
-            { label: '4. Unit cost', type: 'number', field: 'unitCost', placeholder: '0.00' },
-            { label: '5. Average usage per month', type: 'number', field: 'avgUsage', placeholder: '0' },
-            { label: '6. Duration', type: 'number', field: 'duration', placeholder: '1' },
-            { label: '7. Total amount = (Unit cost * Average usage per month * Duration) Auto fill', type: 'calculated', field: 'totalAmount' }
-        ];
-
-        let tbody = document.getElementById('compareTbody');
-        if (!tbody) return;
-        tbody.innerHTML = '';
-
-        attributes.forEach(attr => {
-            let tr = document.createElement('tr');
-            let html = `<td style="font-weight: bold; background: #f8f9fa; position: sticky; left: 0; z-index: 1; border-right: 1px solid #ddd; padding: 12px;">${attr.label}</td>`;
-            
-            for (let i = 0; i < 5; i++) {
-                let item = window.compareItems[i];
-                html += `<td style="text-align: center; border-right: 1px solid #eee; vertical-align: middle; padding: 10px;">`;
-                
-                if (attr.type === 'select') {
-                    html += `<select class="inline-edit" style="width: 100%; padding: 6px;" onchange="onSelectCompareDatabaseItem(${i}, this.value)">${dbOptions}</select>`;
-                } else if (attr.type === 'input') {
-                    html += `<input type="text" class="inline-edit" style="width: 100%;" value="${item[attr.field] || ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
-                } else if (attr.type === 'number') {
-                    html += `<input type="number" class="inline-edit" style="width: 100%;" step="any" value="${item[attr.field] !== undefined ? item[attr.field] : ''}" oninput="updateCompareField(${i}, '${attr.field}', this.value)" placeholder="${attr.placeholder}">`;
-                } else if (attr.type === 'calculated') {
-                    let total = (item.unitCost || 0) * (item.avgUsage || 0) * (item.duration || 0);
-                    html += `<strong id="comp-total-${i}" style="color: #27ae60; font-size: 1.2rem;">${Math.round(total * 100) / 100}</strong>`;
-                }
-                
-                html += `</td>`;
-            }
-            tr.innerHTML = html;
-            tbody.appendChild(tr);
-        });
-    };
       // === 資料備份 ===
     window.backupData = function() {
         const backup = { masterItems: masterItemsData, transactions: transactionsData };
