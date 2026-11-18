@@ -2383,8 +2383,8 @@ window.onload = () => {
     .balance-display { margin-bottom: 20px; padding: 15px; background: #fdfad5; border-radius: 8px; border-left: 5px solid #f1c40f; }
     .balance-display:empty { display: none; }
 
-.table-container { width: 85%; overflow-x: auto; border: 1px solid #dcdde1; border-radius: 8px; }
-table { width: 85%; table-layout: auto; border-collapse: collapse; background: white; }
+.table-container { width: 100%; overflow-x: auto; border: 1px solid #dcdde1; border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; background: white; min-width: 600px; }
     th { background: #f1f2f6; padding: 12px; text-align: left; font-size: 0.95rem; color: #2c3e50; border-bottom: 2px solid #dcdde1; white-space: nowrap; }
     td { padding: 12px; border-bottom: 1px solid #f1f2f6; }
     #purchaseTable { width: max-content; }
@@ -2714,7 +2714,7 @@ table { width: 85%; table-layout: auto; border-collapse: collapse; background: w
           </div>
 
 <div class="table-container">
-    <table style="min-width: 800px;">
+    <table style="min-width: 1000px;">
                   <thead>
                       <tr>
                           <th style="width: 180px; background: #f8f9fa; position: sticky; left: 0; z-index: 2;">比較屬性</th>
