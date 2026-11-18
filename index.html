@@ -1461,29 +1461,21 @@ runningBalData.forEach(t => {
 if (searchText !== "") {
         let searchLower = searchText.toLowerCase();
         let searchIsExact = isExactMatch || searchText.includes("|");
-        if (searchIsExact) {
+if (searchIsExact) {
             let searchParts = searchText.split("|").map(s => s.trim().toLowerCase());
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
                 let fieldsToMatch = [ mCode.toLowerCase(), mCat.toLowerCase(), mDesc.toLowerCase(), String(t.item).toLowerCase() ];
                 
-                // 1. 完全包含：所有 searchParts 都能在 transaction 的欄位中找到
+                // 確保搜尋結果必須嚴格與所選物品吻合，排除其他名稱相似的干擾物品
                 let matchAll = searchParts.every(part => { 
                     if (!part) return true; 
                     return fieldsToMatch.some(f => f.includes(part)); 
                 });
                 
-                // 2. 允許簡寫或缺少分類也能匹配成功：
-                // 如果交易紀錄中只打了 "pouches"，但被選項的 "s20 / pc400 clear pouches" 包含，也算作符合
-                let matchPartial = fieldsToMatch.some(f => {
-                    if (f.trim().length <= 2) return false;
-                    if (f === 'consumable' || f === 'drape') return false;
-                    return searchParts.some(part => part && part.includes(f));
-                });
-                
-                return matchAll || matchPartial;
-});
-        
+                return matchAll;
+            });
+                    
         } else {
             runningBalData = runningBalData.filter(t => {
                 let { mCat, mDesc, mCode } = extractItemDetails(t);
