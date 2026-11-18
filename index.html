@@ -1602,19 +1602,19 @@ window.renderHistoryTable = function(data) {
         
         let extraInfo = []; if(t.packSize) extraInfo.push(`Pack: ${t.packSize}`); if(t.lotNo) extraInfo.push(`Lot: ${t.lotNo}`); if(t.poNo) extraInfo.push(`PO: ${t.poNo}`); if(t.expiryDate) extraInfo.push(`Exp: ${t.expiryDate}`);
         
-        tr.innerHTML = `
+tr.innerHTML = `
           <td>${t.date}</td><td><strong>${mCat || '-'}</strong></td><td title="資料庫原始數據: ${t.item}">${mDesc || '-'}</td>
-          <td>${mCode}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td>${t.qty}</td>
+          <td>${mCode}</td><td style="color: ${typeColor}; font-weight: bold;">${t.type}</td><td><span id="qty-text-${t.id}">${t.qty}</span></td>
           <td style="color: #2980b9; font-weight: bold;">${displayUOM}</td>
           <td style="font-size: 0.85rem; color: #555;">${extraInfo.length > 0 ? extraInfo.join('<br>') : '<span style="color:#ccc;">-</span>'}</td>
-          <td style="font-weight: bold; background-color: #fdfad5;">${balDisplay}</td><td style="${remarkStyle}">${remarkText}</td>
+          <td style="font-weight: bold; background-color: #fdfad5;" id="bal-cell-${t.id}">${balDisplay}</td><td style="${remarkStyle}">${remarkText}</td>
           <td><button class="action-btn edit-btn" onclick="editRecord('${t.id}')">✏️</button><button class="action-btn del-btn" onclick="deleteRecord('${t.id}')">❌</button></td>
         `;
         tbody.appendChild(tr);
       });
     }
 
-    window.editRecord = function(id) {
+window.editRecord = function(id) {
       const record = transactionsData.find(t => t.id === id); const tr = document.getElementById(`row-${id}`);
       tr.innerHTML = `
         <td><input type="date" id="edit-date-${id}" value="${record.date}" class="inline-edit"></td>
@@ -1624,15 +1624,16 @@ window.renderHistoryTable = function(data) {
                 <option value="Drape" ${record.category === 'Drape' ? 'selected' : ''}>Drape</option>
                 <option value="Consumable" ${(record.category || 'Consumable') === 'Consumable' ? 'selected' : ''}>Consumable</option>
             </select><br>
-            <select id="edit-type-${id}" class="inline-edit">
+            <select id="edit-type-${id}" class="inline-edit" onchange="previewLiveBalance('${id}')">
                 <option value="Opening Balance" ${record.type === 'Opening Balance' ? 'selected' : ''}>Opening Balance</option>
                 <option value="In" ${record.type === 'In' ? 'selected' : ''}>In</option>
                 <option value="Out" ${record.type === 'Out' ? 'selected' : ''}>Out</option>
             </select>
         </td>
-        <td><input type="number" id="edit-qty-${id}" value="${record.qty}" class="inline-edit" style="width: 60px;" step="any"><input type="hidden" id="edit-sysAdjust-${id}" value="${record.sysAdjust || 0}"></td>
+        <td><input type="number" id="edit-qty-${id}" value="${record.qty}" class="inline-edit" style="width: 60px;" step="any" oninput="previewLiveBalance('${id}')"><input type="hidden" id="edit-sysAdjust-${id}" value="${record.sysAdjust || 0}"></td>
         <td><input list="packSizeOptions" id="edit-packSize-${id}" value="${record.packSize || ''}" class="inline-edit" placeholder="Pack size" style="margin-bottom:3px;"><br><input type="text" id="edit-lot-${id}" value="${record.lotNo || ''}" class="inline-edit" placeholder="Lot No" style="margin-bottom:3px;"><br><input type="text" id="edit-po-${id}" value="${record.poNo || ''}" class="inline-edit" placeholder="PO No" style="margin-bottom:3px;"><br><input type="date" id="edit-exp-${id}" value="${record.expiryDate || ''}" class="inline-edit"></td>
-        <td>-</td><td><input type="text" id="edit-remarks-${id}" value="${record.remarks || ''}" class="inline-edit" placeholder="備註"></td>
+        <td id="live-bal-${id}" style="font-weight: bold; background-color: #fdfad5; color: #2980b9;">${record.runningBalance !== undefined ? record.runningBalance : '-'}</td>
+        <td><input type="text" id="edit-remarks-${id}" value="${record.remarks || ''}" class="inline-edit" placeholder="備註"></td>
         <td><button class="action-btn save-btn" onclick="saveEdit('${id}')">💾</button><button class="action-btn cancel-btn" onclick="filterHistory()">取消</button></td>
       `;
     }
@@ -1668,6 +1669,62 @@ window.renderHistoryTable = function(data) {
       } catch (e) { console.error(e); alert("更新失敗"); }
     }
 
+    // --- 智能換算系統：手動更改數量時即時運算修改結餘 ---
+    window.previewLiveBalance = function(id) {
+        const qtyInput = document.getElementById(`edit-qty-${id}`);
+        const typeSelect = document.getElementById(`edit-type-${id}`);
+        const balCell = document.getElementById(`live-bal-${id}`);
+        if (!qtyInput || !typeSelect || !balCell) return;
+
+        let newQty = parseFloat(qtyInput.value) || 0;
+        let newType = typeSelect.value;
+        
+        // 複製一份當前交易數據進行暫時模擬計算
+        let tempTransactions = transactionsData.map(t => {
+            if (t.id === id) {
+                return { ...t, qty: newQty, type: newType };
+            }
+            return { ...t };
+        });
+
+        // 重新排序
+        tempTransactions.sort((a, b) => {
+            let d1 = new Date(a.date).getTime(); let d2 = new Date(b.date).getTime();
+            if (d1 !== d2) return d1 - d2;
+            let t1 = a.timestamp ? (a.timestamp.seconds ? a.timestamp.seconds * 1000 : new Date(a.timestamp).getTime()) : 0;
+            let t2 = b.timestamp ? (b.timestamp.seconds ? b.timestamp.seconds * 1000 : new Date(b.timestamp).getTime()) : 0;
+            if (t1 !== t2) return t1 - t2;
+            if (a.type === "Opening Balance" && b.type !== "Opening Balance") return -1;
+            if (b.type === "Opening Balance" && a.type !== "Opening Balance") return 1;
+            return 0;
+        });
+
+        // 計算該物品的暫時結餘
+        let targetRecord = tempTransactions.find(t => t.id === id);
+        if (!targetRecord) return;
+        let targetKey = getItemBalanceKey(targetRecord);
+
+        let itemBalances = {};
+        let currentCalculatedBal = 0;
+        
+        tempTransactions.forEach(t => {
+            let k = getItemBalanceKey(t);
+            if (!itemBalances[k]) itemBalances[k] = 0;
+            let q = parseFloat(t.qty) || 0; let adj = parseFloat(t.sysAdjust) || 0; 
+            if (t.type === "Opening Balance") { itemBalances[k] = q; } 
+            else if (t.type === "In") { itemBalances[k] += (q + adj); } 
+            else if (t.type === "Out") { itemBalances[k] -= q; itemBalances[k] += adj; }
+            
+            if (t.id === id) {
+                currentCalculatedBal = Math.round(itemBalances[k] * 1000) / 1000;
+            }
+        });
+
+        // 即時更新畫面上的結餘顯示
+        balCell.innerText = currentCalculatedBal;
+        balCell.style.color = currentCalculatedBal < 0 ? "#e74c3c" : "#2980b9";
+    };
+    
     window.deleteRecord = async function(id) { if(confirm("⚠️ 確定要刪除這筆紀錄嗎？")) { try { await deleteDoc(doc(db, "transactions", id)); loadStockData(); } catch (e) { console.error(e); alert("刪除失敗"); } } }
 
     window.renderExpiryTable = function() {
